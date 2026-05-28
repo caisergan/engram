@@ -30,6 +30,7 @@ SocialSyncRefreshingWorker (cron, every minute)
 
 SocialSyncWorker (queue consumer)
   └─ loads connection config
+  └─ decrypts authCookies
   └─ calls provider.fetchSavedItems() with stored cursor
   └─ deduplicates against socialSyncHistory
   └─ creates bookmarks (source: "sync", auto-tags)
@@ -75,14 +76,16 @@ The interface is intentionally minimal. Providers own their scraping approach en
 | `userId` | text | — | FK to users, onDelete cascade |
 | `platform` | text enum: `"instagram"`, `"x"`, `"youtube"` | — | Platform identifier |
 | `enabled` | boolean | true | Whether auto-sync is active |
-| `authCookies` | text | — | Encrypted platform session cookies (AES-256-GCM with NEXTAUTH_SECRET) |
+| `authCookies` | text | — | Encrypted cookie blob (AES-256-GCM, IV prepended — same format as vault crypto `encryptText`) |
 | `lastSyncedAt` | timestamp | null | Last successful sync time |
 | `lastSyncStatus` | text enum: `"pending"`, `"success"`, `"failure"` | `"pending"` | Status of last run |
 | `lastSyncError` | text | null | Error message if failed |
 | `syncIntervalMinutes` | integer | 60 | Sync frequency (allowed: 15, 30, 60, 360, 720, 1440) |
 | `autoTagName` | text | platform name | Tag applied to all synced bookmarks |
 | `lastCursor` | text | null | Platform-specific pagination cursor for incremental sync |
+| `totalSynced` | integer | 0 | Running count of total bookmarks synced via this connection |
 | `createdAt` | timestamp | now | |
+| `modifiedAt` | timestamp | now | Auto-updated on changes |
 
 Unique constraint on `(userId, platform)` — one connection per platform per user.
 
@@ -98,6 +101,12 @@ Unique constraint on `(userId, platform)` — one connection per platform per us
 
 Index on `(connectionId, platformItemId)` for fast dedup lookups.
 
+### Cookie Encryption
+
+Cookies are encrypted using the same `encryptText` / `decryptText` functions from `packages/trpc/lib/vaultCrypto.ts`. The encryption key is derived from `NEXTAUTH_SECRET` using PBKDF2 with a fixed application-level salt (`"engram-social-sync-cookie-encryption"`). This is computed once at startup and cached in memory.
+
+This differs from the vault (where the key comes from a user PIN) — here the key is server-scoped since cookies need to be decrypted by background workers without user interaction.
+
 ### Bookmark source enum
 
 Add `"sync"` to the existing source enum on the bookmarks table:
@@ -107,7 +116,7 @@ Add `"sync"` to the existing source enum on the bookmarks table:
 
 ## Platform Providers
 
-Each provider is a single file (~100-150 lines) implementing `SocialSyncProvider`. The scraping logic described below is the initial implementation — it is expected to change as platform APIs evolve.
+Each provider is a single file (~100-150 lines) implementing `SocialSyncProvider`. The scraping logic described below is the initial implementation — it is expected to change as platform APIs evolve. All three providers use cookie-based internal API calls (no official API keys required).
 
 ### Instagram (`instagramProvider.ts`)
 
@@ -130,11 +139,12 @@ Each provider is a single file (~100-150 lines) implementing `SocialSyncProvider
 ### YouTube (`youtubeProvider.ts`)
 
 - **Auth cookies:** `SID`, `HSID`, `SSID`, `LOGIN_INFO`
-- **Endpoint:** YouTube Data API v3 `playlistItems.list` for "Liked Videos" playlist (`LL`), or internal API for Watch Later
+- **Endpoint:** `https://www.youtube.com/youtubei/v1/browse` (internal InnerTube API, cookie-authenticated)
 - **Item ID:** video ID
 - **URL format:** `https://www.youtube.com/watch?v={videoId}`
 - **Auto-tags:** `["youtube"]`
-- **Cursor:** `nextPageToken` from API response
+- **Cursor:** continuation token from InnerTube response
+- **Target:** Liked Videos playlist (playlist ID `LL`)
 
 ## Worker Integration
 
@@ -144,7 +154,7 @@ Runs every minute. Queries `socialSyncConnections` for rows where:
 - `enabled = true`
 - `lastSyncedAt IS NULL` OR `lastSyncedAt + syncIntervalMinutes < now()`
 
-Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `sync:{connectionId}:{hourSlot}` to prevent duplicate runs within the same scheduling window.
+Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `sync:{connectionId}:{intervalSlot}` where `intervalSlot = floor(now / syncIntervalMinutes)` — this prevents duplicate runs within the same scheduling window regardless of interval length.
 
 ### SocialSyncWorker (queue consumer)
 
@@ -154,13 +164,22 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 - **Retries:** 2 with backoff
 
 **Per-sync run:**
-1. Load connection from DB
+1. Load connection from DB, decrypt `authCookies`
 2. Call `provider.fetchSavedItems({ authCookies, cursor, limit: 100 })`
 3. For each item, check `socialSyncHistory` for existing `(connectionId, platformItemId)`
 4. For new items: create bookmark via `bookmarks.createBookmark({ type: "link", url, source: "sync" })`, attach auto-tag + any hashtags
-5. Insert into `socialSyncHistory`
+5. Insert into `socialSyncHistory`, increment `totalSynced`
 6. Update connection: `lastSyncedAt`, `lastCursor`, `lastSyncStatus: "success"`
 7. Cap at 100 items per run. If `hasMore`, save cursor — remainder picked up next run.
+
+### First sync / backfill behavior
+
+When a user first connects a platform, they may have hundreds or thousands of saved items. The sync handles this naturally:
+- First run fetches the newest 100 items (most platforms return newest-first)
+- Cursor is saved after each batch
+- Subsequent scheduled runs continue from the cursor, fetching the next 100
+- This backfills gradually without blocking the worker or hitting rate limits
+- The UI shows "Syncing..." with the `totalSynced` counter incrementing over time
 
 ## Error Handling
 
@@ -179,14 +198,14 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 
 | Procedure | Type | Auth | Description |
 |-----------|------|------|-------------|
-| `socialSync.getConnections` | query | authed | List all connections for current user |
-| `socialSync.connect` | mutation | session | Create connection with platform + cookies |
-| `socialSync.updateCookies` | mutation | session | Update cookies for existing connection |
+| `socialSync.getConnections` | query | authed | List all connections for current user (excludes `authCookies` from response) |
+| `socialSync.connect` | mutation | session | Create connection: validate cookies via provider, encrypt and store, trigger first sync |
+| `socialSync.updateCookies` | mutation | session | Update cookies for existing connection, re-validate, re-enable if previously disabled |
 | `socialSync.disconnect` | mutation | session | Delete connection + sync history (keeps bookmarks) |
 | `socialSync.setEnabled` | mutation | session | Enable/disable auto-sync |
 | `socialSync.updateSettings` | mutation | session | Update interval, auto-tag name |
-| `socialSync.syncNow` | mutation | session | Trigger immediate sync (enqueue job) |
-| `socialSync.getHistory` | query | authed | Paginated sync history for a connection |
+| `socialSync.syncNow` | mutation | session | Trigger immediate sync (rate limited: 1 per connection per 5 minutes) |
+| `socialSync.getSyncStats` | query | authed | Return `totalSynced`, `lastSyncedAt`, `lastSyncStatus` for a connection |
 
 ## UI Design
 
@@ -196,6 +215,7 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 
 - Platform logo + name
 - Connection status badge: "Connected" (green), "Not connected" (gray), "Auth expired" (red)
+- Total synced count (e.g. "423 bookmarks synced")
 - Last synced: relative time (e.g. "2 minutes ago")
 - Enable/disable toggle
 - Sync interval dropdown: 15min, 30min, 1hr, 6hr, 12hr, 24hr
@@ -205,10 +225,12 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 ### Connect dialog
 
 1. User clicks "Connect" on a platform card
-2. Dialog with instructions: "Open [platform] in your browser, open DevTools (F12) → Application → Cookies, and copy the values for: [list of required cookie names]. Paste the JSON below."
+2. Dialog with instructions specific to the platform:
+   - Option A: "Install a cookie export extension (e.g. 'Cookie-Editor' or 'EditThisCookie'), navigate to [platform], export cookies as JSON, and paste below."
+   - Option B (advanced): "Open [platform] in your browser, open DevTools (F12) → Application → Cookies → [domain], and copy the values for: [list of required cookie names]."
 3. Textarea for pasting cookies as JSON: `{ "sessionid": "...", "csrftoken": "..." }`
 4. Submit → server calls `provider.validateAuth()` → on success, saves encrypted cookies and triggers first sync
-5. On validation failure → show error "Could not authenticate with these cookies"
+5. On validation failure → show error "Could not authenticate with these cookies. Make sure you're logged in and the cookies are current."
 
 ### Notifications
 
@@ -217,10 +239,12 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 
 ## Security
 
-- Cookies are encrypted at rest using AES-256-GCM (reusing the vault crypto module) with a key derived from `NEXTAUTH_SECRET`
-- Cookies are only decrypted in memory during sync worker execution
-- Cookies are never exposed to the client after initial submission — the UI shows connection status only
-- `disconnect` permanently deletes stored cookies
+- Cookies are encrypted at rest using AES-256-GCM with a key derived from `NEXTAUTH_SECRET` (server-scoped, not user-specific)
+- The encryption key is derived once at startup via PBKDF2 with a fixed salt and cached in memory
+- Cookies are only decrypted in memory during sync worker execution and `connect`/`updateCookies` validation
+- Cookies are never sent back to the client — the `getConnections` response excludes the `authCookies` field
+- `disconnect` permanently deletes stored cookies and sync history
+- `syncNow` is rate limited (1 per connection per 5 minutes) to prevent abuse
 
 ## Out of Scope
 
