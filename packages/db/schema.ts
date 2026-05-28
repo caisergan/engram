@@ -233,6 +233,7 @@ export const bookmarks = sqliteTable(
         "singlefile",
         "rss",
         "import",
+        "sync",
       ],
     }),
   },
@@ -974,6 +975,69 @@ export const importStagingBookmarks = sqliteTable(
       isb.status,
       isb.processingStartedAt,
     ),
+  ],
+);
+
+export const socialSyncConnections = sqliteTable(
+  "socialSyncConnections",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    platform: text("platform", {
+      enum: ["instagram", "x", "youtube"],
+    }).notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    authCookies: text("authCookies").notNull(),
+    lastSyncedAt: integer("lastSyncedAt", { mode: "timestamp" }),
+    lastSyncStatus: text("lastSyncStatus", {
+      enum: ["pending", "success", "failure"],
+    })
+      .notNull()
+      .default("pending"),
+    lastSyncError: text("lastSyncError"),
+    syncIntervalMinutes: integer("syncIntervalMinutes").notNull().default(60),
+    autoTagName: text("autoTagName"),
+    lastCursor: text("lastCursor"),
+    totalSynced: integer("totalSynced").notNull().default(0),
+    createdAt: createdAtField(),
+    modifiedAt: modifiedAtField(),
+  },
+  (t) => [
+    index("socialSyncConnections_userId_idx").on(t.userId),
+    unique("socialSyncConnections_userId_platform_uniq").on(
+      t.userId,
+      t.platform,
+    ),
+  ],
+);
+
+export const socialSyncHistory = sqliteTable(
+  "socialSyncHistory",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    connectionId: text("connectionId")
+      .notNull()
+      .references(() => socialSyncConnections.id, { onDelete: "cascade" }),
+    platformItemId: text("platformItemId").notNull(),
+    bookmarkId: text("bookmarkId")
+      .notNull()
+      .references(() => bookmarks.id, { onDelete: "cascade" }),
+    syncedAt: createdAtField(),
+  },
+  (t) => [
+    index("socialSyncHistory_connectionId_platformItemId_idx").on(
+      t.connectionId,
+      t.platformItemId,
+    ),
+    index("socialSyncHistory_bookmarkId_idx").on(t.bookmarkId),
   ],
 );
 

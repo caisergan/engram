@@ -603,6 +603,13 @@
       "when": 1779967340760,
       "tag": "0085_add_vault_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "6",
+      "when": 1779975733489,
+      "tag": "0086_add_social_sync_tables",
+      "breakpoints": true
     }
   ]
 }

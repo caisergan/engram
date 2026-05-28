@@ -18,6 +18,7 @@ import {
   Image,
   KeyRound,
   Link,
+  RefreshCw,
   Rss,
   Sparkles,
   User,
@@ -72,6 +73,11 @@ const settingsSidebarItems = (
       name: t("settings.feeds.rss_subscriptions"),
       icon: <Rss size={18} />,
       path: "/settings/feeds",
+    },
+    {
+      name: t("settings.sync.social_sync"),
+      icon: <RefreshCw size={18} />,
+      path: "/settings/sync",
     },
     {
       name: t("settings.backups.backups"),

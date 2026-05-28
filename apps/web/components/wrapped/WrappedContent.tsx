@@ -68,6 +68,7 @@ function formatSourceName(source: BookmarkSource | null): string {
     singlefile: "SingleFile",
     rss: "RSS Feed",
     import: "Import",
+    sync: "Social Sync",
   };
   return sourceMap[source];
 }

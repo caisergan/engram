@@ -277,6 +277,9 @@
       "curated_tags_updated": "Curated tags updated successfully!",
       "curated_tags_update_failed": "Failed to update curated tags"
     },
+    "sync": {
+      "social_sync": "Social Sync"
+    },
     "feeds": {
       "rss_subscriptions": "RSS Subscriptions",
       "add_a_subscription": "Add a Subscription",
@@ -1192,5 +1195,28 @@
     "empty": "Your vault is empty",
     "empty_description": "Move bookmarks here to encrypt and hide them from all views.",
     "pins_dont_match": "PINs don't match"
+  },
+  "social_sync": {
+    "title": "Social Sync",
+    "description": "Automatically import saved posts from social platforms",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "disconnect_confirm": "This will remove the connection and sync history. Your imported bookmarks will be kept.",
+    "update_cookies": "Update Cookies",
+    "sync_now": "Sync Now",
+    "connected": "Connected",
+    "not_connected": "Not connected",
+    "auth_expired": "Auth expired",
+    "last_synced": "Last synced ",
+    "total_synced": "{{count}} bookmarks synced",
+    "sync_interval": "Sync every",
+    "auto_tag": "Auto-tag",
+    "connect_title": "Connect {{platform}}",
+    "connect_instructions_main": "Install a cookie export extension (e.g. 'Cookie-Editor'), navigate to {{platform}}, export cookies as JSON, and paste below.",
+    "connect_instructions_alt": "Or open DevTools (F12) → Application → Cookies, and copy the required values.",
+    "cookies_placeholder": "Paste cookies as JSON...",
+    "connected_success": "Connected to {{platform}}",
+    "disconnected_success": "Disconnected from {{platform}}",
+    "sync_triggered": "Sync started for {{platform}}"
   }
 }
