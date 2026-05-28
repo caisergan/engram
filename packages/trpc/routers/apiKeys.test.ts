@@ -508,6 +508,7 @@ describe("API Keys Routes", () => {
         user: null,
         db,
         req: { ip: null },
+        vaultKey: null,
       });
 
       // Attempting to exchange should fail with verification error

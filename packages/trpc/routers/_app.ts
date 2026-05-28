@@ -16,6 +16,7 @@ import { rulesAppRouter } from "./rules";
 import { subscriptionsRouter } from "./subscriptions";
 import { tagsAppRouter } from "./tags";
 import { usersAppRouter } from "./users";
+import { vaultAppRouter } from "./vault";
 import { webhooksAppRouter } from "./webhooks";
 
 export const appRouter = router({
@@ -37,6 +38,7 @@ export const appRouter = router({
   publicBookmarks: publicBookmarks,
   subscriptions: subscriptionsRouter,
   config: configAppRouter,
+  vault: vaultAppRouter,
 });
 // export type definition of API
 export type AppRouter = typeof appRouter;

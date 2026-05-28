@@ -66,6 +66,7 @@ describe("createRateLimitMiddleware", () => {
       },
       db: {} as never,
       req: { ip: "127.0.0.1" },
+      vaultKey: null,
     }).request("http://localhost/");
 
     expect(response.status).toBe(200);
@@ -80,6 +81,7 @@ describe("createRateLimitMiddleware", () => {
       user: null,
       db: {} as never,
       req: { ip: "127.0.0.1" },
+      vaultKey: null,
     }).request("http://localhost/");
 
     expect(client.checkRateLimit).toHaveBeenCalledWith(

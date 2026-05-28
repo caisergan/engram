@@ -48,6 +48,7 @@ export interface Context {
   req: {
     ip: string | null;
   };
+  vaultKey: Buffer | null;
 }
 
 export interface AuthedContext {
@@ -57,6 +58,7 @@ export interface AuthedContext {
   req: {
     ip: string | null;
   };
+  vaultKey: Buffer | null;
 }
 
 // Avoid exporting the entire t-object

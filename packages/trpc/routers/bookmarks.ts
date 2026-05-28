@@ -10,6 +10,7 @@ import {
   bookmarkAssets,
   bookmarkLinks,
   bookmarks,
+  bookmarksInLists,
   bookmarkTags,
   bookmarkTexts,
   customPrompts,
@@ -27,9 +28,16 @@ import {
   OpenAIQueue,
   QueuePriority,
   QuotaService,
+  SearchIndexingQueue,
   triggerSearchReindex,
 } from "@karakeep/shared-server";
-import { SUPPORTED_BOOKMARK_ASSET_TYPES } from "@karakeep/shared/assetdb";
+import {
+  SUPPORTED_BOOKMARK_ASSET_TYPES,
+  readAsset,
+  saveAsset,
+} from "@karakeep/shared/assetdb";
+import { QuotaApproved } from "@karakeep/shared/storageQuota";
+import { zMoveToVaultSchema } from "@karakeep/shared/types/vault";
 import serverConfig from "@karakeep/shared/config";
 import { bookmarkCreationCounter } from "../stats";
 import { InferenceClientFactory } from "@karakeep/shared/inference";
@@ -61,6 +69,7 @@ import {
   emitRateLimitedEvent,
   router,
 } from "../index";
+import { encryptBuffer, encryptText } from "../lib/vaultCrypto";
 import { RuleEngine } from "../lib/ruleEngine";
 import { getBookmarkIdsFromMatcher } from "../lib/search";
 import { Asset } from "../models/assets";
@@ -456,6 +465,13 @@ export const bookmarksAppRouter = router({
     .output(zBookmarkSchema)
     .use(ensureBookmarkOwnership)
     .mutation(async ({ input, ctx }) => {
+      if (input.vaulted === false) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bookmarks cannot be removed from the vault",
+        });
+      }
+
       await ctx.db.transaction(async (tx) => {
         let somethingChanged = false;
 
@@ -688,6 +704,132 @@ export const bookmarksAppRouter = router({
       ]);
     }),
 
+  moveToVault: bookmarksProcedure
+    .input(zMoveToVaultSchema)
+    .use(ensureBookmarkOwnership)
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.vaultKey) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Vault is locked",
+        });
+      }
+
+      const bookmark = await ctx.db.query.bookmarks.findFirst({
+        where: eq(bookmarks.id, input.bookmarkId),
+        with: { link: true, text: true },
+      });
+
+      if (!bookmark) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Bookmark not found",
+        });
+      }
+
+      if (bookmark.vaulted) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bookmark is already in the vault",
+        });
+      }
+
+      const key = ctx.vaultKey;
+
+      await ctx.db.transaction(async (tx) => {
+        const encryptedTitle = bookmark.title
+          ? encryptText(bookmark.title, key)
+          : null;
+        const encryptedNote = bookmark.note
+          ? encryptText(bookmark.note, key)
+          : null;
+
+        await tx
+          .update(bookmarks)
+          .set({
+            vaulted: true,
+            title: null,
+            note: null,
+            summary: null,
+            encryptedTitle,
+            encryptedNote,
+            taggingStatus: null,
+            summarizationStatus: null,
+          })
+          .where(eq(bookmarks.id, input.bookmarkId));
+
+        if (bookmark.link) {
+          const encryptedUrl = encryptText(bookmark.link.url, key);
+          await tx
+            .update(bookmarkLinks)
+            .set({
+              url: encryptedUrl,
+              title: null,
+              description: null,
+              imageUrl: null,
+              favicon: null,
+              htmlContent: null,
+              author: null,
+              publisher: null,
+            })
+            .where(eq(bookmarkLinks.id, input.bookmarkId));
+        }
+
+        if (bookmark.text?.text) {
+          const encryptedTextContent = encryptText(bookmark.text.text, key);
+          await tx
+            .update(bookmarkTexts)
+            .set({ text: encryptedTextContent })
+            .where(eq(bookmarkTexts.id, input.bookmarkId));
+        }
+
+        const bookmarkAssetRecords = await tx.query.assets.findMany({
+          where: eq(assets.bookmarkId, input.bookmarkId),
+        });
+        for (const asset of bookmarkAssetRecords) {
+          try {
+            const { asset: assetBuffer } = await readAsset({
+              userId: ctx.user.id,
+              assetId: asset.id,
+            });
+            const encryptedBuffer = encryptBuffer(assetBuffer, key);
+            await saveAsset({
+              userId: ctx.user.id,
+              assetId: asset.id,
+              asset: encryptedBuffer,
+              metadata: {
+                contentType: asset.contentType ?? "application/octet-stream",
+                fileName: asset.fileName ?? asset.id,
+              },
+              quotaApproved: QuotaApproved._create(
+                ctx.user.id,
+                encryptedBuffer.byteLength,
+              ),
+            });
+            await tx
+              .update(assets)
+              .set({ encrypted: true })
+              .where(eq(assets.id, asset.id));
+          } catch {
+            // Asset may not exist on disk yet (pending crawl)
+          }
+        }
+
+        await tx
+          .delete(tagsOnBookmarks)
+          .where(eq(tagsOnBookmarks.bookmarkId, input.bookmarkId));
+
+        await tx
+          .delete(bookmarksInLists)
+          .where(eq(bookmarksInLists.bookmarkId, input.bookmarkId));
+      });
+
+      SearchIndexingQueue.enqueue({
+        bookmarkId: input.bookmarkId,
+        type: "delete",
+      });
+    }),
+
   deleteBookmark: bookmarksProcedure
     .use(createEventLogMiddleware("bookmark.delete"))
     .input(z.object({ bookmarkId: z.string() }))
@@ -797,9 +939,19 @@ export const bookmarksAppRouter = router({
     .output(zBookmarkSchema)
     .use(ensureBookmarkAccess)
     .query(async ({ input, ctx }) => {
-      return (
-        await Bookmark.fromId(ctx, input.bookmarkId, input.includeContent)
-      ).asZBookmark();
+      const bookmark = await Bookmark.fromId(
+        ctx,
+        input.bookmarkId,
+        input.includeContent,
+      );
+      const bm = bookmark.asZBookmark();
+      if (bm.vaulted && !ctx.vaultKey) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Vault is locked",
+        });
+      }
+      return bm;
     }),
   searchBookmarks: bookmarksProcedure
     .use(createBookmarksQueriedMiddleware())
