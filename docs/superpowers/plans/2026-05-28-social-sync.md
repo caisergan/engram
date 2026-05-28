@@ -4,7 +4,7 @@
 
 **Goal:** Build a sync engine that periodically fetches saved posts from Instagram, X, and YouTube using cookie-based API calls, creating bookmarks with auto-tagging.
 
-**Architecture:** Provider-adapter pattern. A shared sync engine handles scheduling, dedup, bookmark creation, and state. Platform-specific scraping lives in provider files implementing a `SocialSyncProvider` interface. A cron worker checks for due connections every minute and enqueues sync jobs to a queue. A queue consumer worker processes them sequentially.
+**Architecture:** Provider-adapter pattern. A shared sync engine handles scheduling, dedup, bookmark creation, and state. Platform-specific scraping lives in provider files implementing a `SocialSyncProvider` interface. A cron worker checks for due connections every minute and enqueues sync jobs to a queue. A queue consumer worker processes them sequentially. Bookmarks are created via impersonating tRPC callers (same pattern as the feed worker) so crawling, indexing, and quotas are handled automatically.
 
 **Tech Stack:** Drizzle ORM (SQLite), tRPC, Node.js `crypto` (reusing vault crypto), `node-cron`, React, Next.js, Tailwind CSS, shadcn/ui.
 
@@ -23,7 +23,7 @@
 | `packages/shared/types/socialSync.ts` | Zod schemas for social sync API inputs/outputs + SocialSyncProvider interface |
 | `packages/trpc/lib/cookieEncryption.ts` | Server-scoped cookie encryption (AES-256-GCM key derived from NEXTAUTH_SECRET) |
 | `packages/trpc/lib/cookieEncryption.test.ts` | Tests for cookie encryption |
-| `packages/trpc/lib/socialSync/providers.ts` | Provider registry + provider interface re-export |
+| `packages/trpc/lib/socialSync/providers.ts` | Provider registry |
 | `packages/trpc/lib/socialSync/instagramProvider.ts` | Instagram provider stub |
 | `packages/trpc/lib/socialSync/xProvider.ts` | X/Twitter provider stub |
 | `packages/trpc/lib/socialSync/youtubeProvider.ts` | YouTube provider stub |
@@ -199,23 +199,6 @@ export const zSyncNowSchema = z.object({
   connectionId: z.string(),
 });
 
-export const zGetSyncStatsSchema = z.object({
-  connectionId: z.string(),
-});
-
-export const zConnectionResponseSchema = z.object({
-  id: z.string(),
-  platform: zSocialPlatformSchema,
-  enabled: z.boolean(),
-  lastSyncedAt: z.date().nullable(),
-  lastSyncStatus: z.enum(["pending", "success", "failure"]),
-  lastSyncError: z.string().nullable(),
-  syncIntervalMinutes: z.number(),
-  autoTagName: z.string().nullable(),
-  totalSynced: z.number(),
-  createdAt: z.date(),
-});
-
 export interface SyncItem {
   platformItemId: string;
   url: string;
@@ -298,7 +281,7 @@ describe("Cookie Encryption", () => {
   test("fails to decrypt tampered data", async () => {
     const encrypted = await encryptCookies('{"a":"b"}');
     const tampered = encrypted.slice(0, -2) + "XX";
-    expect(() => decryptCookies(tampered)).toThrow();
+    await expect(decryptCookies(tampered)).rejects.toThrow();
   });
 });
 ```
@@ -323,7 +306,10 @@ let cachedKey: Buffer | null = null;
 
 async function getEncryptionKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
-  cachedKey = await deriveEncryptionKey(serverConfig.signingSecret(), FIXED_SALT);
+  cachedKey = await deriveEncryptionKey(
+    serverConfig.signingSecret(),
+    FIXED_SALT,
+  );
   return cachedKey;
 }
 
@@ -337,6 +323,8 @@ export async function decryptCookies(ciphertext: string): Promise<string> {
   return decryptText(ciphertext, key);
 }
 ```
+
+Note: `encryptText`/`decryptText` from vaultCrypto are synchronous, but `deriveEncryptionKey` is async. The `encryptCookies`/`decryptCookies` wrappers are async because of the key derivation on first call. After the key is cached, the actual encrypt/decrypt is synchronous internally but the function signature remains async.
 
 - [ ] **Run tests to verify they pass**
 
@@ -360,7 +348,7 @@ git commit -m "feat(social-sync): add server-scoped cookie encryption utility"
 - Create: `packages/trpc/lib/socialSync/xProvider.ts`
 - Create: `packages/trpc/lib/socialSync/youtubeProvider.ts`
 
-### Step 3.1: Create provider registry
+### Step 3.1: Create provider registry and stub providers
 
 - [ ] **Create `packages/trpc/lib/socialSync/providers.ts`**
 
@@ -384,10 +372,6 @@ export function getProvider(platform: SocialPlatform): SocialSyncProvider {
   return providers[platform];
 }
 ```
-
-### Step 3.2: Create stub providers
-
-Each provider implements the interface but has placeholder scraping logic. The `validateAuth` method does a basic check that required cookie keys are present. The `fetchSavedItems` method returns empty results — actual API calls will be implemented when the scraping approach is finalized.
 
 - [ ] **Create `packages/trpc/lib/socialSync/instagramProvider.ts`**
 
@@ -497,20 +481,20 @@ Add near the other queue definitions (after `FeedQueue`):
 export const zSocialSyncRequestSchema = z.object({
   connectionId: z.string(),
 });
-export type ZSocialSyncRequestSchema = z.infer<typeof zSocialSyncRequestSchema>;
+export type ZSocialSyncRequestSchema = z.infer<
+  typeof zSocialSyncRequestSchema
+>;
 
-export const SocialSyncQueue = createDeferredQueue<ZSocialSyncRequestSchema>(
-  "social_sync_queue",
-  {
+export const SocialSyncQueue =
+  createDeferredQueue<ZSocialSyncRequestSchema>("social_sync_queue", {
     defaultJobArgs: {
       numRetries: 2,
     },
     keepFailedJobs: false,
-  },
-);
+  });
 ```
 
-Add the `z` import if not already present (it should be — check top of file).
+This is auto-exported via `export * from "./queues"` in `packages/shared-server/src/index.ts`.
 
 - [ ] **Commit**
 
@@ -714,17 +698,15 @@ Expected: FAIL — `socialSync` router not found
 
 - [ ] **Create `packages/trpc/routers/socialSync.ts`**
 
+Uses `experimental_trpcMiddleware` for connection ownership (matches the existing `ensureBookmarkOwnership` pattern — properly typed context, no `as any` casts):
+
 ```typescript
-import { TRPCError } from "@trpc/server";
+import { experimental_trpcMiddleware, TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 
-import {
-  socialSyncConnections,
-  socialSyncHistory,
-} from "@karakeep/db/schema";
+import { socialSyncConnections } from "@karakeep/db/schema";
 import {
   zConnectSchema,
-  zConnectionResponseSchema,
   zDisconnectSchema,
   zSetEnabledSchema,
   zSyncNowSchema,
@@ -733,34 +715,37 @@ import {
 } from "@karakeep/shared/types/socialSync";
 import { SocialSyncQueue } from "@karakeep/shared-server";
 
-import { router, sessionProcedure, authedProcedure } from "../index";
+import type { AuthedContext } from "../index";
+import { authedProcedure, router, sessionProcedure } from "../index";
 import { decryptCookies, encryptCookies } from "../lib/cookieEncryption";
 import { getProvider } from "../lib/socialSync/providers";
 
-function ensureConnectionOwnership() {
-  return sessionProcedure.use(async (opts) => {
-    const input = opts.input as { connectionId: string };
-    const connection = await opts.ctx.db.query.socialSyncConnections.findFirst({
+const ensureConnectionOwnership = experimental_trpcMiddleware<{
+  ctx: AuthedContext;
+  input: { connectionId: string };
+}>().create(async (opts) => {
+  const connection =
+    await opts.ctx.db.query.socialSyncConnections.findFirst({
       where: and(
-        eq(socialSyncConnections.id, input.connectionId),
+        eq(socialSyncConnections.id, opts.input.connectionId),
         eq(socialSyncConnections.userId, opts.ctx.user.id),
       ),
     });
-    if (!connection) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Connection not found",
-      });
-    }
-    return opts.next({ ctx: { ...opts.ctx, connection } });
-  });
-}
+  if (!connection) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Connection not found",
+    });
+  }
+  return opts.next({ ctx: { ...opts.ctx, connection } });
+});
 
 export const socialSyncAppRouter = router({
   getConnections: authedProcedure.query(async ({ ctx }) => {
-    const connections = await ctx.db.query.socialSyncConnections.findMany({
-      where: eq(socialSyncConnections.userId, ctx.user.id),
-    });
+    const connections =
+      await ctx.db.query.socialSyncConnections.findMany({
+        where: eq(socialSyncConnections.userId, ctx.user.id),
+      });
     return connections.map((c) => ({
       id: c.id,
       platform: c.platform,
@@ -778,12 +763,13 @@ export const socialSyncAppRouter = router({
   connect: sessionProcedure
     .input(zConnectSchema)
     .mutation(async ({ input, ctx }) => {
-      const existing = await ctx.db.query.socialSyncConnections.findFirst({
-        where: and(
-          eq(socialSyncConnections.userId, ctx.user.id),
-          eq(socialSyncConnections.platform, input.platform),
-        ),
-      });
+      const existing =
+        await ctx.db.query.socialSyncConnections.findFirst({
+          where: and(
+            eq(socialSyncConnections.userId, ctx.user.id),
+            eq(socialSyncConnections.platform, input.platform),
+          ),
+        });
       if (existing) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -818,11 +804,11 @@ export const socialSyncAppRouter = router({
       );
     }),
 
-  updateCookies: ensureConnectionOwnership()
+  updateCookies: sessionProcedure
     .input(zUpdateCookiesSchema)
+    .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {
-      const connection = (ctx as any).connection;
-      const provider = getProvider(connection.platform);
+      const provider = getProvider(ctx.connection.platform);
       const valid = await provider.validateAuth(input.cookies);
       if (!valid) {
         throw new TRPCError({
@@ -844,16 +830,18 @@ export const socialSyncAppRouter = router({
         .where(eq(socialSyncConnections.id, input.connectionId));
     }),
 
-  disconnect: ensureConnectionOwnership()
+  disconnect: sessionProcedure
     .input(zDisconnectSchema)
+    .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {
       await ctx.db
         .delete(socialSyncConnections)
         .where(eq(socialSyncConnections.id, input.connectionId));
     }),
 
-  setEnabled: ensureConnectionOwnership()
+  setEnabled: sessionProcedure
     .input(zSetEnabledSchema)
+    .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {
       await ctx.db
         .update(socialSyncConnections)
@@ -861,8 +849,9 @@ export const socialSyncAppRouter = router({
         .where(eq(socialSyncConnections.id, input.connectionId));
     }),
 
-  updateSettings: ensureConnectionOwnership()
+  updateSettings: sessionProcedure
     .input(zUpdateSyncSettingsSchema)
+    .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {
       const updates: Record<string, unknown> = {};
       if (input.syncIntervalMinutes !== undefined) {
@@ -879,11 +868,11 @@ export const socialSyncAppRouter = router({
       }
     }),
 
-  syncNow: ensureConnectionOwnership()
+  syncNow: sessionProcedure
     .input(zSyncNowSchema)
+    .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {
-      const connection = (ctx as any).connection;
-      if (!connection.enabled) {
+      if (!ctx.connection.enabled) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Connection is disabled. Enable it first.",
@@ -931,30 +920,34 @@ git commit -m "feat(social-sync): add social sync tRPC router with connect, disc
 
 ### Step 6.1: Create the worker
 
+Uses the impersonating tRPC client pattern (same as feed worker) so bookmark creation goes through the full pipeline — crawling, indexing, quotas, rule engine, etc.
+
 - [ ] **Create `apps/workers/workers/socialSyncWorker.ts`**
 
 ```typescript
 import cron from "node-cron";
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
-import { logger } from "@karakeep/shared/logger";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
+
 import { db } from "@karakeep/db";
 import {
   bookmarkTags,
-  bookmarks,
   socialSyncConnections,
   socialSyncHistory,
   tagsOnBookmarks,
 } from "@karakeep/db/schema";
+import logger from "@karakeep/shared/logger";
+import type { DequeuedJob } from "@karakeep/shared/queueing";
+import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import {
   SocialSyncQueue,
   type ZSocialSyncRequestSchema,
 } from "@karakeep/shared-server";
-import type { DequeuedJob } from "@karakeep/shared/queueing";
-import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 
 import { decryptCookies } from "@karakeep/trpc/lib/cookieEncryption";
 import { getProvider } from "@karakeep/trpc/lib/socialSync/providers";
+
 import { getQueueClient } from "../queue";
+import { buildImpersonatingTRPCClient } from "../trpc";
 
 const MAX_ITEMS_PER_RUN = 100;
 
@@ -967,7 +960,9 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
   });
 
   if (!connection || !connection.enabled) {
-    logger.info(`[social-sync][${connectionId}] Connection not found or disabled, skipping`);
+    logger.info(
+      `[social-sync][${connectionId}] Connection not found or disabled, skipping`,
+    );
     return;
   }
 
@@ -976,7 +971,9 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
   try {
     authCookies = await decryptCookies(connection.authCookies);
   } catch (e) {
-    logger.error(`[social-sync][${connectionId}] Failed to decrypt cookies: ${e}`);
+    logger.error(
+      `[social-sync][${connectionId}] Failed to decrypt cookies: ${e}`,
+    );
     await db
       .update(socialSyncConnections)
       .set({
@@ -997,14 +994,14 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
       limit: MAX_ITEMS_PER_RUN,
     });
   } catch (e: any) {
-    const isAuthError =
-      e?.status === 401 || e?.status === 403 || e?.statusCode === 401 || e?.statusCode === 403;
-    if (isAuthError) {
+    const status = e?.status ?? e?.statusCode;
+    if (status === 401 || status === 403) {
       await db
         .update(socialSyncConnections)
         .set({
           lastSyncStatus: "failure",
-          lastSyncError: "Authentication expired — update your cookies",
+          lastSyncError:
+            "Authentication expired — update your cookies",
           enabled: false,
         })
         .where(eq(socialSyncConnections.id, connectionId));
@@ -1013,7 +1010,9 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
     throw e;
   }
 
+  const trpcClient = await buildImpersonatingTRPCClient(connection.userId);
   let newCount = 0;
+
   for (const item of result.items) {
     const existing = await db.query.socialSyncHistory.findFirst({
       where: and(
@@ -1023,78 +1022,75 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
     });
     if (existing) continue;
 
-    const [bookmark] = await db
-      .insert(bookmarks)
-      .values({
-        userId: connection.userId,
+    try {
+      const bookmark = await trpcClient.bookmarks.createBookmark({
         type: BookmarkTypes.LINK,
+        url: item.url,
+        title: item.title,
         source: "sync",
-        title: item.title ?? null,
-      })
-      .returning();
+      });
 
-    const { bookmarkLinks } = await import("@karakeep/db/schema");
-    await db.insert(bookmarkLinks).values({
-      id: bookmark.id,
-      url: item.url,
-    });
-
-    // Apply auto-tag
-    const tagName = connection.autoTagName ?? connection.platform;
-    let tag = await db.query.bookmarkTags.findFirst({
-      where: and(
-        eq(bookmarkTags.userId, connection.userId),
-        eq(bookmarkTags.name, tagName),
-      ),
-    });
-    if (!tag) {
-      [tag] = await db
-        .insert(bookmarkTags)
-        .values({ userId: connection.userId, name: tagName })
-        .returning();
-    }
-    await db
-      .insert(tagsOnBookmarks)
-      .values({
-        bookmarkId: bookmark.id,
-        tagId: tag.id,
-        attachedBy: "human",
-      })
-      .onConflictDoNothing();
-
-    // Apply hashtag tags from the item
-    if (item.tags) {
-      for (const hashtagName of item.tags) {
-        let hashtag = await db.query.bookmarkTags.findFirst({
-          where: and(
-            eq(bookmarkTags.userId, connection.userId),
-            eq(bookmarkTags.name, hashtagName),
-          ),
-        });
-        if (!hashtag) {
-          [hashtag] = await db
-            .insert(bookmarkTags)
-            .values({ userId: connection.userId, name: hashtagName })
-            .returning();
-        }
-        await db
-          .insert(tagsOnBookmarks)
-          .values({
-            bookmarkId: bookmark.id,
-            tagId: hashtag.id,
-            attachedBy: "human",
-          })
-          .onConflictDoNothing();
+      // Apply auto-tag
+      const tagName = connection.autoTagName ?? connection.platform;
+      let tag = await db.query.bookmarkTags.findFirst({
+        where: and(
+          eq(bookmarkTags.userId, connection.userId),
+          eq(bookmarkTags.name, tagName),
+        ),
+      });
+      if (!tag) {
+        [tag] = await db
+          .insert(bookmarkTags)
+          .values({ userId: connection.userId, name: tagName })
+          .returning();
       }
+      await db
+        .insert(tagsOnBookmarks)
+        .values({
+          bookmarkId: bookmark.id,
+          tagId: tag.id,
+          attachedBy: "human",
+        })
+        .onConflictDoNothing();
+
+      // Apply hashtag tags from the item
+      if (item.tags) {
+        for (const hashtagName of item.tags) {
+          let hashtag = await db.query.bookmarkTags.findFirst({
+            where: and(
+              eq(bookmarkTags.userId, connection.userId),
+              eq(bookmarkTags.name, hashtagName),
+            ),
+          });
+          if (!hashtag) {
+            [hashtag] = await db
+              .insert(bookmarkTags)
+              .values({ userId: connection.userId, name: hashtagName })
+              .returning();
+          }
+          await db
+            .insert(tagsOnBookmarks)
+            .values({
+              bookmarkId: bookmark.id,
+              tagId: hashtag.id,
+              attachedBy: "human",
+            })
+            .onConflictDoNothing();
+        }
+      }
+
+      await db.insert(socialSyncHistory).values({
+        connectionId,
+        platformItemId: item.platformItemId,
+        bookmarkId: bookmark.id,
+      });
+
+      newCount++;
+    } catch (e) {
+      logger.warn(
+        `[social-sync][${connectionId}] Failed to create bookmark for ${item.url}: ${e}`,
+      );
     }
-
-    await db.insert(socialSyncHistory).values({
-      connectionId,
-      platformItemId: item.platformItemId,
-      bookmarkId: bookmark.id,
-    });
-
-    newCount++;
   }
 
   await db
@@ -1137,7 +1133,9 @@ export class SocialSyncWorker {
                   lastSyncStatus: "failure",
                   lastSyncError: String(job.error),
                 })
-                .where(eq(socialSyncConnections.id, job.data.connectionId));
+                .where(
+                  eq(socialSyncConnections.id, job.data.connectionId),
+                );
             }
           },
         },
@@ -1161,13 +1159,17 @@ export const SocialSyncRefreshingWorker = cron.schedule(
           eq(socialSyncConnections.enabled, true),
           or(
             isNull(socialSyncConnections.lastSyncedAt),
-            lt(
-              socialSyncConnections.lastSyncedAt,
-              new Date(now.getTime() - 60 * 1000),
-            ),
+            // Fetch all that synced more than their interval ago
+            // The per-connection interval check below filters more precisely
+            sql`${socialSyncConnections.lastSyncedAt} < ${Math.floor(now.getTime() / 1000) - 60 * 15}`,
           ),
         ),
-        columns: { id: true, userId: true, syncIntervalMinutes: true, lastSyncedAt: true },
+        columns: {
+          id: true,
+          userId: true,
+          syncIntervalMinutes: true,
+          lastSyncedAt: true,
+        },
       })
       .then((connections) => {
         for (const conn of connections) {
@@ -1202,7 +1204,10 @@ export const SocialSyncRefreshingWorker = cron.schedule(
 
 Add imports at top:
 ```typescript
-import { SocialSyncWorker, SocialSyncRefreshingWorker } from "./workers/socialSyncWorker";
+import {
+  SocialSyncRefreshingWorker,
+  SocialSyncWorker,
+} from "./workers/socialSyncWorker";
 import { SocialSyncQueue } from "@karakeep/shared-server";
 ```
 
@@ -1214,14 +1219,14 @@ Add to `workerBuilders`:
   },
 ```
 
-Add cron start after the feed cron start block:
+Add cron start (after the feed cron start block):
 ```typescript
 if (workers.some((w) => w.name === "socialSync")) {
   SocialSyncRefreshingWorker.start();
 }
 ```
 
-Add cron stop in shutdown:
+Add cron stop in shutdown (after the feed cron stop block):
 ```typescript
 if (workers.some((w) => w.name === "socialSync")) {
   SocialSyncRefreshingWorker.stop();
@@ -1232,7 +1237,7 @@ if (workers.some((w) => w.name === "socialSync")) {
 
 ```bash
 git add apps/workers/workers/socialSyncWorker.ts apps/workers/index.ts
-git commit -m "feat(social-sync): add SocialSyncWorker queue consumer and cron refreshing worker"
+git commit -m "feat(social-sync): add SocialSyncWorker with impersonating tRPC client and cron scheduler"
 ```
 
 ---
@@ -1244,16 +1249,16 @@ git commit -m "feat(social-sync): add SocialSyncWorker queue consumer and cron r
 
 ### Step 7.1: Add translation keys
 
-- [ ] **Add to `settings` section and create `social_sync` section**
+- [ ] **Add to `settings` section**
 
-In the `settings` section of the translation file, add:
 ```json
   "sync": {
     "social_sync": "Social Sync"
   }
 ```
 
-Add a top-level `social_sync` section (before or after the `vault` section):
+- [ ] **Add top-level `social_sync` section** (before the closing `}`):
+
 ```json
   "social_sync": {
     "title": "Social Sync",
@@ -1266,8 +1271,7 @@ Add a top-level `social_sync` section (before or after the `vault` section):
     "connected": "Connected",
     "not_connected": "Not connected",
     "auth_expired": "Auth expired",
-    "syncing": "Syncing...",
-    "last_synced": "Last synced {{time}}",
+    "last_synced": "Last synced ",
     "total_synced": "{{count}} bookmarks synced",
     "sync_interval": "Sync every",
     "auto_tag": "Auto-tag",
@@ -1281,13 +1285,10 @@ Add a top-level `social_sync` section (before or after the `vault` section):
     "connect_instructions_main": "Install a cookie export extension (e.g. 'Cookie-Editor'), navigate to {{platform}}, export cookies as JSON, and paste below.",
     "connect_instructions_alt": "Or open DevTools (F12) → Application → Cookies, and copy the required values.",
     "cookies_placeholder": "Paste cookies as JSON...",
-    "cookie_validation_failed": "Could not authenticate with these cookies. Make sure you're logged in and the cookies are current.",
+    "cookie_validation_failed": "Could not authenticate with these cookies.",
     "connected_success": "Connected to {{platform}}",
     "disconnected_success": "Disconnected from {{platform}}",
-    "sync_triggered": "Sync started for {{platform}}",
-    "platform_instagram": "Instagram",
-    "platform_x": "X (Twitter)",
-    "platform_youtube": "YouTube"
+    "sync_triggered": "Sync started for {{platform}}"
   }
 ```
 
@@ -1307,434 +1308,15 @@ git commit -m "feat(social-sync): add English translation keys"
 - Create: `apps/web/components/settings/SocialSyncSettings.tsx`
 - Modify: `apps/web/app/settings/layout.tsx`
 
-### Step 8.1: Create the settings page route
+### Step 8.1: Create the page, component, and sidebar item
+
+Follow the existing settings page pattern (e.g. `apps/web/app/settings/feeds/page.tsx`). The `SocialSyncSettings` component renders one card per platform with connect/disconnect/settings controls. Full component code is in the original plan — refer to the design spec for UI details.
+
+Create the page route, the settings component with `PlatformCard` (connect dialog, update cookies dialog, disconnect confirmation, sync interval dropdown, auto-tag input, enable/disable toggle, sync now button), and add the sidebar item with `RefreshCw` icon pointing to `/settings/sync`.
 
 - [ ] **Create `apps/web/app/settings/sync/page.tsx`**
-
-```typescript
-import type { Metadata } from "next";
-import { SocialSyncSettings } from "@/components/settings/SocialSyncSettings";
-import { useTranslation } from "@/lib/i18n/server";
-
-export async function generateMetadata(): Promise<Metadata> {
-  // oxlint-disable-next-line rules-of-hooks
-  const { t } = await useTranslation();
-  return {
-    title: `${t("settings.sync.social_sync")} | Karakeep`,
-  };
-}
-
-export default async function SyncSettingsPage() {
-  // oxlint-disable-next-line rules-of-hooks
-  const { t } = await useTranslation();
-  return (
-    <div className="flex flex-col gap-4 p-4">
-      <h1 className="text-2xl font-bold">{t("social_sync.title")}</h1>
-      <p className="text-muted-foreground">{t("social_sync.description")}</p>
-      <SocialSyncSettings />
-    </div>
-  );
-}
-```
-
-### Step 8.2: Create the settings component
-
 - [ ] **Create `apps/web/components/settings/SocialSyncSettings.tsx`**
-
-```typescript
-"use client";
-
-import { useState } from "react";
-import ActionConfirmingDialog from "@/components/ui/action-confirming-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import RelativeTime from "@/components/ui/relative-time";
-import { useTranslation } from "@/lib/i18n/client";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-
-import type { SocialPlatform } from "@karakeep/shared/types/socialSync";
-import { useTRPC } from "@karakeep/shared-react/trpc";
-
-const PLATFORMS: { id: SocialPlatform; name: string }[] = [
-  { id: "instagram", name: "Instagram" },
-  { id: "x", name: "X (Twitter)" },
-  { id: "youtube", name: "YouTube" },
-];
-
-const INTERVALS = [
-  { value: 15, label: "15 minutes" },
-  { value: 30, label: "30 minutes" },
-  { value: 60, label: "1 hour" },
-  { value: 360, label: "6 hours" },
-  { value: 720, label: "12 hours" },
-  { value: 1440, label: "24 hours" },
-];
-
-function PlatformCard({
-  platform,
-}: {
-  platform: { id: SocialPlatform; name: string };
-}) {
-  const { t } = useTranslation();
-  const api = useTRPC();
-  const queryClient = useQueryClient();
-  const connectionsQuery = useQuery(
-    api.socialSync.getConnections.queryOptions(),
-  );
-  const connection = connectionsQuery.data?.find(
-    (c) => c.platform === platform.id,
-  );
-
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [cookies, setCookies] = useState("");
-  const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [updateCookiesOpen, setUpdateCookiesOpen] = useState(false);
-  const [updateCookiesValue, setUpdateCookiesValue] = useState("");
-
-  const invalidate = () =>
-    queryClient.invalidateQueries(
-      api.socialSync.getConnections.queryFilter(),
-    );
-
-  const connectMutation = useMutation(
-    api.socialSync.connect.mutationOptions({
-      onSuccess: () => {
-        toast.success(t("social_sync.connected_success", { platform: platform.name }));
-        invalidate();
-        setConnectOpen(false);
-        setCookies("");
-      },
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const disconnectMutation = useMutation(
-    api.socialSync.disconnect.mutationOptions({
-      onSuccess: () => {
-        toast.success(t("social_sync.disconnected_success", { platform: platform.name }));
-        invalidate();
-      },
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const updateCookiesMutation = useMutation(
-    api.socialSync.updateCookies.mutationOptions({
-      onSuccess: () => {
-        toast.success(t("social_sync.connected_success", { platform: platform.name }));
-        invalidate();
-        setUpdateCookiesOpen(false);
-        setUpdateCookiesValue("");
-      },
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const setEnabledMutation = useMutation(
-    api.socialSync.setEnabled.mutationOptions({
-      onSuccess: invalidate,
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const updateSettingsMutation = useMutation(
-    api.socialSync.updateSettings.mutationOptions({
-      onSuccess: invalidate,
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const syncNowMutation = useMutation(
-    api.socialSync.syncNow.mutationOptions({
-      onSuccess: () =>
-        toast.success(t("social_sync.sync_triggered", { platform: platform.name })),
-      onError: (err) => toast.error(err.message),
-    }),
-  );
-
-  const statusBadge = !connection ? (
-    <Badge variant="secondary">{t("social_sync.not_connected")}</Badge>
-  ) : connection.lastSyncStatus === "failure" ? (
-    <Badge variant="destructive">{t("social_sync.auth_expired")}</Badge>
-  ) : (
-    <Badge variant="default">{t("social_sync.connected")}</Badge>
-  );
-
-  return (
-    <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-lg">{platform.name}</CardTitle>
-          {statusBadge}
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!connection ? (
-            <Button onClick={() => setConnectOpen(true)}>
-              {t("social_sync.connect")}
-            </Button>
-          ) : (
-            <>
-              <div className="text-muted-foreground flex items-center gap-4 text-sm">
-                <span>
-                  {t("social_sync.total_synced", {
-                    count: connection.totalSynced,
-                  })}
-                </span>
-                {connection.lastSyncedAt && (
-                  <span>
-                    {t("social_sync.last_synced", { time: "" })}
-                    <RelativeTime date={connection.lastSyncedAt} />
-                  </span>
-                )}
-              </div>
-
-              {connection.lastSyncError && (
-                <p className="text-destructive text-sm">
-                  {connection.lastSyncError}
-                </p>
-              )}
-
-              <div className="flex items-center justify-between">
-                <Label>{t("social_sync.sync_interval")}</Label>
-                <Select
-                  value={String(connection.syncIntervalMinutes)}
-                  onValueChange={(v) =>
-                    updateSettingsMutation.mutate({
-                      connectionId: connection.id,
-                      syncIntervalMinutes: parseInt(v),
-                    })
-                  }
-                >
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INTERVALS.map((i) => (
-                      <SelectItem key={i.value} value={String(i.value)}>
-                        {i.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label>{t("social_sync.auto_tag")}</Label>
-                <Input
-                  className="w-40"
-                  value={connection.autoTagName}
-                  onChange={(e) =>
-                    updateSettingsMutation.mutate({
-                      connectionId: connection.id,
-                      autoTagName: e.target.value,
-                    })
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label>Enabled</Label>
-                <Switch
-                  checked={connection.enabled}
-                  onCheckedChange={(checked) =>
-                    setEnabledMutation.mutate({
-                      connectionId: connection.id,
-                      enabled: checked,
-                    })
-                  }
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!connection.enabled || syncNowMutation.isPending}
-                  onClick={() =>
-                    syncNowMutation.mutate({
-                      connectionId: connection.id,
-                    })
-                  }
-                >
-                  {t("social_sync.sync_now")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setUpdateCookiesOpen(true)}
-                >
-                  {t("social_sync.update_cookies")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => setDisconnectOpen(true)}
-                >
-                  {t("social_sync.disconnect")}
-                </Button>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Connect Dialog */}
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {t("social_sync.connect_title", { platform: platform.name })}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-muted-foreground text-sm">
-              {t("social_sync.connect_instructions_main", {
-                platform: platform.name,
-              })}
-            </p>
-            <p className="text-muted-foreground text-xs">
-              {t("social_sync.connect_instructions_alt")}
-            </p>
-            <Textarea
-              placeholder={t("social_sync.cookies_placeholder")}
-              value={cookies}
-              onChange={(e) => setCookies(e.target.value)}
-              rows={5}
-            />
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="secondary">{t("actions.cancel")}</Button>
-            </DialogClose>
-            <Button
-              onClick={() =>
-                connectMutation.mutate({
-                  platform: platform.id,
-                  cookies,
-                })
-              }
-              disabled={connectMutation.isPending || !cookies.trim()}
-            >
-              {t("social_sync.connect")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Update Cookies Dialog */}
-      <Dialog open={updateCookiesOpen} onOpenChange={setUpdateCookiesOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("social_sync.update_cookies")}</DialogTitle>
-          </DialogHeader>
-          <Textarea
-            placeholder={t("social_sync.cookies_placeholder")}
-            value={updateCookiesValue}
-            onChange={(e) => setUpdateCookiesValue(e.target.value)}
-            rows={5}
-          />
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="secondary">{t("actions.cancel")}</Button>
-            </DialogClose>
-            <Button
-              onClick={() =>
-                connection &&
-                updateCookiesMutation.mutate({
-                  connectionId: connection.id,
-                  cookies: updateCookiesValue,
-                })
-              }
-              disabled={
-                updateCookiesMutation.isPending || !updateCookiesValue.trim()
-              }
-            >
-              {t("social_sync.update_cookies")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Disconnect Dialog */}
-      {connection && (
-        <ActionConfirmingDialog
-          open={disconnectOpen}
-          setOpen={setDisconnectOpen}
-          title={t("social_sync.disconnect")}
-          description={
-            <p className="text-muted-foreground text-sm">
-              {t("social_sync.disconnect_confirm")}
-            </p>
-          }
-          actionButton={(_setOpen) => (
-            <Button
-              variant="destructive"
-              onClick={() =>
-                disconnectMutation.mutate({
-                  connectionId: connection.id,
-                })
-              }
-              disabled={disconnectMutation.isPending}
-            >
-              {t("social_sync.disconnect")}
-            </Button>
-          )}
-        />
-      )}
-    </>
-  );
-}
-
-export function SocialSyncSettings() {
-  return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      {PLATFORMS.map((p) => (
-        <PlatformCard key={p.id} platform={p} />
-      ))}
-    </div>
-  );
-}
-```
-
-### Step 8.3: Add sidebar item to settings layout
-
-- [ ] **Modify `apps/web/app/settings/layout.tsx`**
-
-Add import (find the lucide imports):
-```typescript
-import { RefreshCw } from "lucide-react";
-```
-
-Add to `settingsSidebarItems` array (after the feeds/RSS item):
-```typescript
-    {
-      name: t("settings.sync.social_sync"),
-      icon: <RefreshCw size={18} />,
-      path: "/settings/sync",
-    },
-```
-
+- [ ] **Add sidebar item to `apps/web/app/settings/layout.tsx`**
 - [ ] **Commit**
 
 ```bash
@@ -1748,30 +1330,11 @@ git commit -m "feat(social-sync): add Social Sync settings page with platform ca
 
 ### Step 9.1: Fix type errors and verify
 
-- [ ] **Run typecheck**
-
-Run: `pnpm typecheck`
-
-Fix any type errors. Common ones to watch for:
-- Missing `vaultKey: null` in new context objects
-- `socialSyncConnections` / `socialSyncHistory` not exported from schema (ensure they're exported)
-- `SocialSyncQueue` not exported from `@karakeep/shared-server` (ensure the barrel export includes it)
-- Worker import paths
-
-- [ ] **Run tests**
-
-Run: `pnpm --filter @karakeep/trpc test`
-Expected: All tests pass including new social sync tests
-
-- [ ] **Run lint and format**
-
-Run: `pnpm lint:fix && pnpm format:fix`
-
-- [ ] **Regenerate OpenAPI spec** (the source enum changed)
-
-Run: `pnpm --filter @karakeep/open-api generate`
-
-- [ ] **Commit**
+- [ ] **Run typecheck:** `pnpm typecheck` — fix any errors
+- [ ] **Run tests:** `pnpm --filter @karakeep/trpc test` — all tests pass
+- [ ] **Run lint and format:** `pnpm lint:fix && pnpm format:fix`
+- [ ] **Regenerate OpenAPI spec** (source enum changed): `pnpm --filter @karakeep/open-api generate`
+- [ ] **Commit fixes**
 
 ```bash
 git add -A
@@ -1792,13 +1355,24 @@ The providers are stubs. When ready to implement actual scraping:
 4. Iterate on the response parsing
 5. Repeat for other providers
 
-The framework (worker, scheduler, dedup, UI) is fully functional — only the data fetching part of each provider needs to be filled in.
+The framework (worker, scheduler, dedup, UI) is fully functional — only the data fetching inside each provider needs to be filled in.
+
+### Bookmark Creation Pipeline
+
+The worker uses `buildImpersonatingTRPCClient(userId)` (same as the feed worker) to create bookmarks. This means every synced bookmark goes through the full pipeline:
+- Quota checking
+- Dedup (Karakeep's built-in URL dedup)
+- Link crawling (title, description, thumbnail extraction)
+- AI tagging/summarization (if enabled)
+- Search indexing
+- Webhook notifications
+- Rule engine
 
 ### Adding New Platforms
 
-1. Add the platform to the `zSocialPlatformSchema` enum in `packages/shared/types/socialSync.ts`
-2. Add it to the `platform` enum in the `socialSyncConnections` table in `packages/db/schema.ts`
+1. Add the platform to `zSocialPlatformSchema` in `packages/shared/types/socialSync.ts`
+2. Add it to the `platform` enum in `socialSyncConnections` table in `packages/db/schema.ts`
 3. Create a provider file in `packages/trpc/lib/socialSync/`
 4. Register it in `packages/trpc/lib/socialSync/providers.ts`
-5. Add it to the `PLATFORMS` array in `apps/web/components/settings/SocialSyncSettings.tsx`
+5. Add it to the `PLATFORMS` array in `SocialSyncSettings.tsx`
 6. Generate a migration
