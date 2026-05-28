@@ -46,6 +46,7 @@ interface SocialSyncProvider {
   fetchSavedItems(config: {
     authCookies: string;
     cursor: string | null;
+    sinceTimestamp: Date | null;
     limit: number;
   }): Promise<{
     items: SyncItem[];
@@ -65,6 +66,8 @@ interface SyncItem {
 ```
 
 The interface is intentionally minimal. Providers own their scraping approach entirely — the engine only cares about the return type. When scraping logic needs to change (new endpoints, browser automation, official APIs), only the provider file changes.
+
+`sinceTimestamp` is passed as `lastSyncedAt` from the connection record. Providers use it to stop fetching once they reach items older than the last sync. On first sync (`sinceTimestamp: null`), the provider fetches from the newest items backward. This gives two layers of dedup: time-based boundary (stop early) + `socialSyncHistory` lookup (catch-all).
 
 ## Schema & Data Model
 
@@ -165,7 +168,7 @@ Enqueues one job per due connection to `SocialSyncQueue` with idempotency key `s
 
 **Per-sync run:**
 1. Load connection from DB, decrypt `authCookies`
-2. Call `provider.fetchSavedItems({ authCookies, cursor, limit: 100 })`
+2. Call `provider.fetchSavedItems({ authCookies, cursor, sinceTimestamp: lastSyncedAt, limit: 100 })`
 3. For each item, check `socialSyncHistory` for existing `(connectionId, platformItemId)`
 4. For new items: create bookmark via `bookmarks.createBookmark({ type: "link", url, source: "sync" })`, attach auto-tag + any hashtags
 5. Insert into `socialSyncHistory`, increment `totalSynced`
