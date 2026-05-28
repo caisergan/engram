@@ -101,6 +101,7 @@ describe("RuleEngine", () => {
       user: { id: userId, role: "user" },
       db: db, // Cast needed because TestDB might have extra test methods
       req: { ip: null },
+      vaultKey: null,
     };
 
     // Seed Tags

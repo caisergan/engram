@@ -98,6 +98,12 @@ export const users = sqliteTable("user", {
   }).default("titlecase-spaces"),
   curatedTagIds: text("curatedTagIds", { mode: "json" }).$type<string[]>(),
   inferredTagLang: text("inferredTagLang"),
+
+  // Vault Settings
+  vaultPinHash: text("vaultPinHash"),
+  vaultPinSalt: text("vaultPinSalt"),
+  vaultEncryptionSalt: text("vaultEncryptionSalt"),
+  vaultAutoLockMinutes: integer("vaultAutoLockMinutes").notNull().default(5),
 });
 
 export const accounts = sqliteTable(
@@ -199,6 +205,7 @@ export const bookmarks = sqliteTable(
     favourited: integer("favourited", { mode: "boolean" })
       .notNull()
       .default(false),
+    vaulted: integer("vaulted", { mode: "boolean" }).notNull().default(false),
     userId: text("userId")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -210,6 +217,9 @@ export const bookmarks = sqliteTable(
     }).default("pending"),
     summary: text("summary"),
     note: text("note"),
+    encryptedTitle: text("encryptedTitle"),
+    encryptedUrl: text("encryptedUrl"),
+    encryptedNote: text("encryptedNote"),
     type: text("type", {
       enum: [BookmarkTypes.LINK, BookmarkTypes.TEXT, BookmarkTypes.ASSET],
     }).notNull(),
@@ -240,6 +250,12 @@ export const bookmarks = sqliteTable(
     index("bookmarks_userId_favourited_createdAt_id_idx").on(
       b.userId,
       b.favourited,
+      b.createdAt,
+      b.id,
+    ),
+    index("bookmarks_userId_vaulted_createdAt_id_idx").on(
+      b.userId,
+      b.vaulted,
       b.createdAt,
       b.id,
     ),
@@ -317,6 +333,9 @@ export const assets = sqliteTable(
     size: integer("size").notNull().default(0),
     contentType: text("contentType"),
     fileName: text("fileName"),
+    encrypted: integer("encrypted", { mode: "boolean" })
+      .notNull()
+      .default(false),
     bookmarkId: text("bookmarkId").references(() => bookmarks.id, {
       onDelete: "cascade",
     }),

@@ -26,5 +26,6 @@ export async function buildImpersonatingAuthedContext(
     req: {
       ip: null,
     },
+    vaultKey: null,
   };
 }

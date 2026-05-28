@@ -9,6 +9,7 @@ import { UserLocalSettingsCtx } from "@/lib/userLocalSettings/bookmarksLayout";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createTRPCClient, httpBatchLink, loggerLink } from "@trpc/client";
 import superjson from "superjson";
+import { getVaultToken } from "@/lib/vaultToken";
 
 import type { ClientConfig } from "@karakeep/shared/config";
 import type { AppRouter } from "@karakeep/trpc/routers/_app";
@@ -74,6 +75,10 @@ export default function Providers({
           url: `/api/trpc`,
           maxURLLength: TRPC_MAX_URL_LENGTH_INTERNAL,
           transformer: superjson,
+          headers() {
+            const vaultToken = getVaultToken();
+            return vaultToken ? { "x-vault-token": vaultToken } : {};
+          },
         }),
       ],
     }),

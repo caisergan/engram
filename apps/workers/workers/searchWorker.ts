@@ -86,6 +86,11 @@ async function runIndex(
     return;
   }
 
+  if (bookmark.vaulted) {
+    await runDelete(searchClient, bookmarkId, batch);
+    return;
+  }
+
   const document: BookmarkSearchDocument = {
     id: bookmark.id,
     userId: bookmark.userId,

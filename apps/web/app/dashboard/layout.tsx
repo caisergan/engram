@@ -15,9 +15,11 @@ import {
   ClipboardList,
   Highlighter,
   Home,
+  Lock,
   Search,
   Tag,
 } from "lucide-react";
+import { VaultProvider } from "@/components/dashboard/vault/VaultProvider";
 
 import { PluginManager, PluginType } from "@karakeep/shared/plugins";
 import { tryCatch } from "@karakeep/shared/tryCatch";
@@ -86,6 +88,11 @@ export default async function Dashboard({
         icon: <Archive size={18} />,
         path: "/dashboard/archive",
       },
+      {
+        name: t("common.vault"),
+        icon: <Lock size={18} />,
+        path: "/dashboard/vault",
+      },
     ].flat();
 
   const mobileSidebar = (t: TFunction) => [
@@ -99,25 +106,27 @@ export default async function Dashboard({
 
   return (
     <UserSettingsContextProvider userSettings={userSettings.data}>
-      <ReaderSettingsProvider>
-        <SidebarLayout
-          sidebar={
-            <Sidebar
-              items={items}
-              extraSections={
-                <>
-                  <Separator />
-                  <AllLists initialData={lists.data} />
-                </>
-              }
-            />
-          }
-          mobileSidebar={<MobileSidebar items={mobileSidebar} />}
-          modal={modal}
-        >
-          {children}
-        </SidebarLayout>
-      </ReaderSettingsProvider>
+      <VaultProvider>
+        <ReaderSettingsProvider>
+          <SidebarLayout
+            sidebar={
+              <Sidebar
+                items={items}
+                extraSections={
+                  <>
+                    <Separator />
+                    <AllLists initialData={lists.data} />
+                  </>
+                }
+              />
+            }
+            mobileSidebar={<MobileSidebar items={mobileSidebar} />}
+            modal={modal}
+          >
+            {children}
+          </SidebarLayout>
+        </ReaderSettingsProvider>
+      </VaultProvider>
     </UserSettingsContextProvider>
   );
 }

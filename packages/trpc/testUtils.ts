@@ -39,6 +39,7 @@ export function getApiCaller(
   email?: string,
   role: "user" | "admin" = "user",
   auth: Context["auth"] = userId ? { type: "session" } : null,
+  vaultKey: Buffer | null = null,
 ) {
   const createCaller = createCallerFactory(appRouter);
   return createCaller({
@@ -54,6 +55,7 @@ export function getApiCaller(
     req: {
       ip: null,
     },
+    vaultKey,
   });
 }
 

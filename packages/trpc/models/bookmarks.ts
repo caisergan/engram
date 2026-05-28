@@ -52,6 +52,7 @@ import { htmlToPlainText } from "@karakeep/shared/utils/htmlUtils";
 
 import { AuthedContext } from "..";
 import { mapDBAssetTypeToUserType } from "../lib/attachments";
+import { decryptText } from "../lib/vaultCrypto";
 import { Asset } from "./assets";
 import { List } from "./lists";
 
@@ -151,13 +152,25 @@ export class Bookmark extends BareBookmark {
   private static async toZodSchema(
     bookmark: BookmarkQueryReturnType,
     includeContent: boolean,
+    vaultKey: Buffer | null = null,
   ): Promise<ZBookmark> {
     const { tagsOnBookmarks, link, text, asset, assets, ...rest } = bookmark;
+
+    const shouldDecrypt = bookmark.vaulted && vaultKey;
+    const decryptedTitle =
+      shouldDecrypt && bookmark.encryptedTitle
+        ? decryptText(bookmark.encryptedTitle, vaultKey)
+        : rest.title;
+    const decryptedNote =
+      shouldDecrypt && bookmark.encryptedNote
+        ? decryptText(bookmark.encryptedNote, vaultKey)
+        : rest.note;
 
     let content: ZBookmarkContent = {
       type: BookmarkTypes.UNKNOWN,
     };
     if (bookmark.link) {
+      const url = shouldDecrypt ? decryptText(link.url, vaultKey) : link.url;
       content = {
         type: BookmarkTypes.LINK,
         screenshotAssetId: assets.find(
@@ -175,7 +188,7 @@ export class Bookmark extends BareBookmark {
         )?.id,
         videoAssetId: assets.find((a) => a.assetType == AssetTypes.LINK_VIDEO)
           ?.id,
-        url: link.url,
+        url,
         title: link.title,
         description: link.description,
         imageUrl: link.imageUrl,
@@ -192,10 +205,13 @@ export class Bookmark extends BareBookmark {
       };
     }
     if (bookmark.text) {
+      const textContent =
+        shouldDecrypt && text.text
+          ? decryptText(text.text, vaultKey)
+          : (text.text ?? "");
       content = {
         type: BookmarkTypes.TEXT,
-        // It's ok to include the text content as it's usually not big and is used to render the text bookmark card.
-        text: text.text ?? "",
+        text: textContent,
         sourceUrl: text.sourceUrl,
       };
     }
@@ -227,6 +243,8 @@ export class Bookmark extends BareBookmark {
         fileName: a.fileName,
       })),
       ...rest,
+      title: decryptedTitle,
+      note: decryptedNote,
     };
   }
 
@@ -265,7 +283,7 @@ export class Bookmark extends BareBookmark {
     }
     return Bookmark.fromData(
       ctx,
-      await Bookmark.toZodSchema(bookmark, includeContent),
+      await Bookmark.toZodSchema(bookmark, includeContent, ctx.vaultKey),
     );
   }
 
@@ -458,7 +476,7 @@ export class Bookmark extends BareBookmark {
       );
     };
 
-    // Build common filter conditions (archived, favourited, ids)
+    // Build common filter conditions (archived, favourited, vaulted, ids)
     const buildCommonFilters = (): (SQL | undefined)[] => [
       input.archived !== undefined
         ? eq(bookmarks.archived, input.archived)
@@ -466,6 +484,9 @@ export class Bookmark extends BareBookmark {
       input.favourited !== undefined
         ? eq(bookmarks.favourited, input.favourited)
         : undefined,
+      input.vaulted !== undefined
+        ? eq(bookmarks.vaulted, input.vaulted)
+        : eq(bookmarks.vaulted, false),
       input.ids ? inArray(bookmarks.id, input.ids) : undefined,
     ];
 
@@ -691,6 +712,30 @@ export class Bookmark extends BareBookmark {
     );
 
     const bookmarksArr = Object.values(bookmarksRes);
+
+    // Decrypt vaulted bookmark fields if vault key is available
+    if (ctx.vaultKey) {
+      for (const b of bookmarksArr) {
+        if (!b.vaulted) continue;
+        const raw = b as Record<string, unknown>;
+        if (raw.encryptedTitle && typeof raw.encryptedTitle === "string") {
+          b.title = decryptText(raw.encryptedTitle, ctx.vaultKey);
+        }
+        if (raw.encryptedNote && typeof raw.encryptedNote === "string") {
+          b.note = decryptText(raw.encryptedNote, ctx.vaultKey);
+        }
+        // Link URL and text content are encrypted in-place — only decrypt
+        // if title was also encrypted (indicating moveToVault was used)
+        if (raw.encryptedTitle || raw.encryptedNote || raw.encryptedUrl) {
+          if (b.content.type === BookmarkTypes.LINK) {
+            b.content.url = decryptText(b.content.url, ctx.vaultKey);
+          }
+          if (b.content.type === BookmarkTypes.TEXT && b.content.text) {
+            b.content.text = decryptText(b.content.text, ctx.vaultKey);
+          }
+        }
+      }
+    }
 
     // Fetch HTML content from assets for bookmarks that have contentAssetId (large content)
     if (input.includeContent) {

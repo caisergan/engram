@@ -27,9 +27,11 @@ import {
   MoreHorizontal,
   Pencil,
   RotateCw,
+  Lock as LockIcon,
   SquarePen,
   Trash2,
 } from "lucide-react";
+import { MoveToVaultDialog } from "./MoveToVaultDialog";
 import { toast } from "sonner";
 
 import type {
@@ -112,6 +114,7 @@ export default function BookmarkOptions({ bookmark }: { bookmark: ZBookmark }) {
     useState(false);
   const [isTextEditorOpen, setTextEditorOpen] = useState(false);
   const [isEditBookmarkDialogOpen, setEditBookmarkDialogOpen] = useState(false);
+  const [moveToVaultOpen, setMoveToVaultOpen] = useState(false);
 
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -280,6 +283,14 @@ export default function BookmarkOptions({ bookmark }: { bookmark: ZBookmark }) {
           bookmarkId: linkId,
           archived: !bookmark.archived,
         }),
+    },
+    {
+      id: "moveToVault",
+      title: t("vault.move_to_vault"),
+      icon: <LockIcon className="mr-2 size-4" />,
+      visible: isOwner && !bookmark.vaulted,
+      disabled: demoMode,
+      onClick: () => setMoveToVaultOpen(true),
     },
     {
       id: "copy-link",
@@ -468,6 +479,11 @@ export default function BookmarkOptions({ bookmark }: { bookmark: ZBookmark }) {
         bookmark={bookmark}
         open={isTextEditorOpen}
         setOpen={setTextEditorOpen}
+      />
+      <MoveToVaultDialog
+        bookmarkId={bookmark.id}
+        open={moveToVaultOpen}
+        onOpenChange={setMoveToVaultOpen}
       />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
