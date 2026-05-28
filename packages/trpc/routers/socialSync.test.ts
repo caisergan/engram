@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { CustomTestContext } from "../testUtils";
 import { defaultBeforeEach } from "../testUtils";
@@ -26,7 +26,18 @@ vi.mock("@karakeep/shared-server", async (original) => {
   };
 });
 
-beforeEach<CustomTestContext>(defaultBeforeEach(true));
+beforeEach<CustomTestContext>(async (ctx) => {
+  await defaultBeforeEach(true)(ctx);
+  vi.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ form_data: {} }),
+  } as Response);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const VALID_INSTAGRAM_COOKIES = JSON.stringify({
   sessionid: "abc123",
