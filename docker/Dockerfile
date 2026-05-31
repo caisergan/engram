@@ -50,7 +50,14 @@ COPY ./patches ./patches
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm config set fetch-timeout 600000 && \
+    pnpm config set fetch-retries 8 && \
+    pnpm config set fetch-retry-mintimeout 10000 && \
+    pnpm config set fetch-retry-maxtimeout 120000 && \
+    pnpm config set network-concurrency 4 && \
+    pnpm install --frozen-lockfile
 
 COPY . .
 
