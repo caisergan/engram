@@ -1,9 +1,8 @@
+import { PLATFORM_REQUIRED_COOKIES } from "@karakeep/shared/types/socialSync";
 import type {
   SocialSyncProvider,
   SyncItem,
 } from "@karakeep/shared/types/socialSync";
-
-const REQUIRED_COOKIES = ["sessionid", "csrftoken", "ds_user_id"];
 const IG_APP_ID = "936619743392459";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -22,7 +21,7 @@ interface ParsedCookies {
 function parseCookies(authCookies: string): ParsedCookies | null {
   try {
     const cookies = JSON.parse(authCookies);
-    const valid = REQUIRED_COOKIES.every(
+    const valid = PLATFORM_REQUIRED_COOKIES.instagram.every(
       (key) => typeof cookies[key] === "string" && cookies[key].length > 0,
     );
     if (!valid) return null;

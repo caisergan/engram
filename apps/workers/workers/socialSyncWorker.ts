@@ -18,6 +18,7 @@ import { SocialSyncQueue } from "@karakeep/shared-server";
 
 import { decryptCookies } from "@karakeep/trpc/lib/cookieEncryption";
 import { getProvider } from "@karakeep/trpc/lib/socialSync/providers";
+import { planSync } from "@karakeep/trpc/lib/socialSync/syncEngine";
 
 const MAX_ITEMS_PER_RUN = 100;
 
@@ -57,11 +58,22 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
 
   let result;
   try {
-    result = await provider.fetchSavedItems({
+    result = await planSync({
+      provider,
       authCookies,
-      cursor: connection.lastCursor,
       sinceTimestamp: connection.lastSyncedAt,
-      limit: MAX_ITEMS_PER_RUN,
+      backfillComplete: connection.backfillComplete,
+      resumeCursor: connection.lastCursor,
+      maxItems: MAX_ITEMS_PER_RUN,
+      isSeen: async (platformItemId) => {
+        const existing = await db.query.socialSyncHistory.findFirst({
+          where: and(
+            eq(socialSyncHistory.connectionId, connectionId),
+            eq(socialSyncHistory.platformItemId, platformItemId),
+          ),
+        });
+        return !!existing;
+      },
     });
   } catch (e: unknown) {
     const err = e as Record<string, unknown>;
@@ -83,15 +95,7 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
   const trpcClient = await buildImpersonatingTRPCClient(connection.userId);
   let newCount = 0;
 
-  for (const item of result.items) {
-    const existing = await db.query.socialSyncHistory.findFirst({
-      where: and(
-        eq(socialSyncHistory.connectionId, connectionId),
-        eq(socialSyncHistory.platformItemId, item.platformItemId),
-      ),
-    });
-    if (existing) continue;
-
+  for (const item of result.newItems) {
     try {
       const bookmark = await trpcClient.bookmarks.createBookmark({
         type: BookmarkTypes.LINK,
@@ -165,7 +169,8 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
     .update(socialSyncConnections)
     .set({
       lastSyncedAt: new Date(),
-      lastCursor: result.nextCursor,
+      lastCursor: result.resumeCursor,
+      backfillComplete: result.backfillComplete,
       lastSyncStatus: "success",
       lastSyncError: null,
       totalSynced: sql`${socialSyncConnections.totalSynced} + ${newCount}`,

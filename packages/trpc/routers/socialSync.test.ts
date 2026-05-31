@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { CustomTestContext } from "../testUtils";
-import { defaultBeforeEach } from "../testUtils";
+import { defaultBeforeEach, getApiKeyCallerForPlainKey } from "../testUtils";
 
 vi.mock("@karakeep/shared/config", async (original) => {
   const mod = (await original()) as { default: Record<string, unknown> };
@@ -99,6 +99,61 @@ describe("Social Sync Router", () => {
       const user2 = await apiCallers[1].socialSync.getConnections();
       expect(user1).toHaveLength(1);
       expect(user2).toHaveLength(0);
+    });
+  });
+
+  describe("API-key auth (extension)", () => {
+    test<CustomTestContext>("allows an API key to connect", async ({
+      apiCallers,
+      db,
+    }) => {
+      const created = await apiCallers[0].apiKeys.create({ name: "ext" });
+      const apiKeyCaller = await getApiKeyCallerForPlainKey(db, created.key);
+
+      await apiKeyCaller.socialSync.connect({
+        platform: "instagram",
+        cookies: VALID_INSTAGRAM_COOKIES,
+      });
+
+      const connections = await apiKeyCaller.socialSync.getConnections();
+      expect(connections).toHaveLength(1);
+      expect(connections[0].platform).toBe("instagram");
+    });
+
+    test<CustomTestContext>("rejects an API key without the socialSync scope", async ({
+      apiCallers,
+      db,
+    }) => {
+      const created = await apiCallers[0].apiKeys.create({
+        name: "narrow",
+        scopes: ["bookmarks:read"],
+      });
+      const apiKeyCaller = await getApiKeyCallerForPlainKey(db, created.key);
+
+      await expect(
+        apiKeyCaller.socialSync.connect({
+          platform: "instagram",
+          cookies: VALID_INSTAGRAM_COOKIES,
+        }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    test<CustomTestContext>("still rejects an API key for syncNow", async ({
+      apiCallers,
+      db,
+    }) => {
+      const created = await apiCallers[0].apiKeys.create({ name: "ext" });
+      const apiKeyCaller = await getApiKeyCallerForPlainKey(db, created.key);
+
+      await apiCallers[0].socialSync.connect({
+        platform: "instagram",
+        cookies: VALID_INSTAGRAM_COOKIES,
+      });
+      const [conn] = await apiCallers[0].socialSync.getConnections();
+
+      await expect(
+        apiKeyCaller.socialSync.syncNow({ connectionId: conn.id }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
   });
 

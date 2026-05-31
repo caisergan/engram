@@ -93,6 +93,11 @@ const RESOURCE_TRANSLATION_KEYS = {
       "settings.api_keys.scopes.resources.subscriptions.description",
     hidden: true,
   },
+  socialSync: {
+    labelKey: "settings.api_keys.scopes.resources.socialSync.label",
+    descriptionKey: "settings.api_keys.scopes.resources.socialSync.description",
+    hidden: true,
+  },
 } as const satisfies Record<
   ZApiKeyScopeResource,
   { labelKey: string; descriptionKey: string; hidden: boolean }

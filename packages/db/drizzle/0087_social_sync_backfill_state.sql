@@ -1,0 +1,1 @@
+ALTER TABLE `socialSyncConnections` ADD `backfillComplete` integer DEFAULT false NOT NULL;

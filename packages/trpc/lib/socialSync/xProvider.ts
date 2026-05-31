@@ -1,6 +1,5 @@
+import { PLATFORM_REQUIRED_COOKIES } from "@karakeep/shared/types/socialSync";
 import type { SocialSyncProvider } from "@karakeep/shared/types/socialSync";
-
-const REQUIRED_COOKIES = ["auth_token", "ct0"];
 
 export const xProvider: SocialSyncProvider = {
   platform: "x",
@@ -8,7 +7,7 @@ export const xProvider: SocialSyncProvider = {
   async validateAuth(authCookies: string): Promise<boolean> {
     try {
       const cookies = JSON.parse(authCookies);
-      return REQUIRED_COOKIES.every(
+      return PLATFORM_REQUIRED_COOKIES.x.every(
         (key) => typeof cookies[key] === "string" && cookies[key].length > 0,
       );
     } catch {

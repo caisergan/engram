@@ -1002,7 +1002,15 @@ export const socialSyncConnections = sqliteTable(
     lastSyncError: text("lastSyncError"),
     syncIntervalMinutes: integer("syncIntervalMinutes").notNull().default(60),
     autoTagName: text("autoTagName"),
+    // Resume cursor for paging the saved feed. Null means "start from the top".
+    // Used to continue an in-progress backfill across runs; reset to null once a
+    // run reaches the bottom of history or the already-synced region.
     lastCursor: text("lastCursor"),
+    // Whether the one-time historical backfill has reached the bottom of the
+    // feed. Once true, every run re-anchors at the top to catch new saves.
+    backfillComplete: integer("backfillComplete", { mode: "boolean" })
+      .notNull()
+      .default(false),
     totalSynced: integer("totalSynced").notNull().default(0),
     createdAt: createdAtField(),
     modifiedAt: modifiedAtField(),

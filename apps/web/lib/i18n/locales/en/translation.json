@@ -401,6 +401,10 @@
           "importSessions": {
             "label": "Import Sessions",
             "description": "Access import sessions."
+          },
+          "socialSync": {
+            "label": "Social Sync",
+            "description": "Connect and manage social media sync."
           }
         },
         "admin_resources": {
@@ -1209,6 +1213,7 @@
     "auth_expired": "Auth expired",
     "last_synced": "Last synced ",
     "total_synced": "{{count}} bookmarks synced",
+    "backfilling": "Importing saved history…",
     "sync_interval": "Sync every",
     "auto_tag": "Auto-tag",
     "connect_title": "Connect {{platform}}",

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
+import SocialSyncConnect from "./components/SocialSyncConnect";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import {
@@ -208,6 +209,8 @@ export default function OptionsPage() {
       <p className="text-xs text-muted-foreground">
         When disabled, you&apos;ll confirm before saving bookmarks.
       </p>
+      <hr />
+      <SocialSyncConnect />
       <hr />
       <div className="flex gap-2">
         <span className="my-auto">Server Address:</span>

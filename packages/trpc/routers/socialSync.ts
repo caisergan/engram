@@ -13,9 +13,18 @@ import {
 import { SocialSyncQueue } from "@karakeep/shared-server";
 
 import type { AuthedContext } from "../index";
-import { authedProcedure, router, sessionProcedure } from "../index";
+import {
+  createScopedAuthedProcedure,
+  router,
+  sessionProcedure,
+} from "../index";
 import { encryptCookies } from "../lib/cookieEncryption";
 import { getProvider } from "../lib/socialSync/providers";
+
+// API-key callers must hold the `socialSync` scope (read for queries, readwrite
+// for mutations); session callers always pass. Full-access keys (e.g. the
+// browser extension's) satisfy this; narrowly-scoped keys are rejected.
+const socialSyncProcedure = createScopedAuthedProcedure("socialSync");
 
 const ensureConnectionOwnership = experimental_trpcMiddleware<{
   ctx: AuthedContext;
@@ -37,7 +46,7 @@ const ensureConnectionOwnership = experimental_trpcMiddleware<{
 });
 
 export const socialSyncAppRouter = router({
-  getConnections: authedProcedure.query(async ({ ctx }) => {
+  getConnections: socialSyncProcedure.query(async ({ ctx }) => {
     const connections = await ctx.db.query.socialSyncConnections.findMany({
       where: eq(socialSyncConnections.userId, ctx.user.id),
     });
@@ -51,11 +60,12 @@ export const socialSyncAppRouter = router({
       syncIntervalMinutes: c.syncIntervalMinutes,
       autoTagName: c.autoTagName ?? c.platform,
       totalSynced: c.totalSynced,
+      backfillComplete: c.backfillComplete,
       createdAt: c.createdAt,
     }));
   }),
 
-  connect: sessionProcedure
+  connect: socialSyncProcedure
     .input(zConnectSchema)
     .mutation(async ({ input, ctx }) => {
       const existing = await ctx.db.query.socialSyncConnections.findFirst({
@@ -98,7 +108,7 @@ export const socialSyncAppRouter = router({
       );
     }),
 
-  updateCookies: sessionProcedure
+  updateCookies: socialSyncProcedure
     .input(zUpdateCookiesSchema)
     .use(ensureConnectionOwnership)
     .mutation(async ({ input, ctx }) => {

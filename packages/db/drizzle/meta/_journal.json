@@ -610,6 +610,13 @@
       "when": 1779975733489,
       "tag": "0086_add_social_sync_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "6",
+      "when": 1780231622638,
+      "tag": "0087_social_sync_backfill_state",
+      "breakpoints": true
     }
   ]
 }

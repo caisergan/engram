@@ -63,3 +63,27 @@ export interface SocialSyncProvider {
 
   validateAuth(authCookies: string): Promise<boolean>;
 }
+
+export const PLATFORM_REQUIRED_COOKIES: Record<SocialPlatform, string[]> = {
+  instagram: ["sessionid", "csrftoken", "ds_user_id"],
+  x: ["auth_token", "ct0"],
+  youtube: ["SID", "HSID", "SSID"],
+};
+
+/**
+ * Build the JSON cookie blob the social-sync providers expect, keeping only the
+ * required cookies for the platform. Returns null if any required cookie is
+ * missing or empty (e.g. the user isn't logged in).
+ */
+export function buildCookieBlob(
+  platform: SocialPlatform,
+  available: Record<string, string>,
+): string | null {
+  const blob: Record<string, string> = {};
+  for (const name of PLATFORM_REQUIRED_COOKIES[platform]) {
+    const value = available[name];
+    if (typeof value !== "string" || value.length === 0) return null;
+    blob[name] = value;
+  }
+  return JSON.stringify(blob);
+}

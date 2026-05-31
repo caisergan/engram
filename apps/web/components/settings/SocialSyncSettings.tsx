@@ -129,10 +129,12 @@ function PlatformCard({
 
   const syncNowMutation = useMutation(
     api.socialSync.syncNow.mutationOptions({
-      onSuccess: () =>
+      onSuccess: () => {
         toast.success(
           t("social_sync.sync_triggered", { platform: platform.name }),
-        ),
+        );
+        invalidate();
+      },
       onError: (err) => toast.error(err.message),
     }),
   );
@@ -172,6 +174,14 @@ function PlatformCard({
                   </span>
                 )}
               </div>
+
+              {!connection.backfillComplete &&
+                connection.enabled &&
+                connection.lastSyncStatus !== "failure" && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("social_sync.backfilling")}
+                  </p>
+                )}
 
               {connection.lastSyncError && (
                 <p className="text-sm text-destructive">

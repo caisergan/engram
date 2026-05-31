@@ -45,7 +45,13 @@
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "permissions": ["storage", "tabs", "contextMenus", "activeTab", "scripting"],
-  "optional_host_permissions": ["<all_urls>"],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": [
+    "<all_urls>",
+    "https://*.instagram.com/*",
+    "https://*.x.com/*",
+    "https://*.twitter.com/*"
+  ],
   "content_scripts": [
     {
       "matches": ["https://karakeep.invalid/*"],
