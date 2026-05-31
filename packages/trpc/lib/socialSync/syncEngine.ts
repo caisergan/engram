@@ -50,6 +50,8 @@ export interface PlanSyncInput {
   /** Returns true if an item was already imported on a previous run. */
   isSeen: (platformItemId: string) => Promise<boolean>;
   signal?: AbortSignal;
+  /** Called once after each page is fetched. Pure observability hook. */
+  onPage?: (pagesScanned: number) => void | Promise<void>;
   pageSize?: number;
   maxItems?: number;
   maxPages?: number;
@@ -91,6 +93,7 @@ export async function planSync(input: PlanSyncInput): Promise<PlanSyncResult> {
       signal: input.signal,
     });
     pages++;
+    await input.onPage?.(pages);
 
     let newInPage = 0;
     for (const item of result.items) {
