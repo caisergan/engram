@@ -235,6 +235,7 @@ export const FeedQueue = createDeferredQueue<ZFeedRequestSchema>("feed_queue", {
 // Social Sync Worker
 export const zSocialSyncRequestSchema = z.object({
   connectionId: z.string(),
+  trigger: z.enum(["manual", "scheduled"]).optional().default("scheduled"),
 });
 export type ZSocialSyncRequestSchema = z.infer<typeof zSocialSyncRequestSchema>;
 
