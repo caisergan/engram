@@ -87,3 +87,73 @@ export function buildCookieBlob(
   }
   return JSON.stringify(blob);
 }
+
+/**
+ * Normalize whatever cookie payload a user (or the browser extension) provides
+ * into a flat `{ name: value }` map. Providers validate the required cookies
+ * against this map, so they don't each have to understand the input shape.
+ *
+ * Accepts the three shapes users actually paste/send:
+ *  - A cookie-export extension array, e.g. Cookie-Editor: `[{ name, value, ... }]`
+ *  - A flat object blob (what {@link buildCookieBlob} emits): `{ sessionid: "..." }`
+ *  - A raw cookie header string: `"sessionid=...; csrftoken=..."`
+ *
+ * Values are kept verbatim (URL-encoded values are preserved as-is, which is how
+ * they must be sent in the Cookie header). Returns null only when the input is
+ * blank or cannot be parsed as any of the supported shapes.
+ */
+export function normalizeCookieInput(
+  input: string,
+): Record<string, string> | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+
+    // Cookie-export extension format: array of { name, value, ... } entries.
+    if (Array.isArray(parsed)) {
+      const map: Record<string, string> = {};
+      for (const entry of parsed) {
+        if (
+          entry &&
+          typeof entry === "object" &&
+          typeof (entry as { name?: unknown }).name === "string" &&
+          typeof (entry as { value?: unknown }).value === "string"
+        ) {
+          const { name, value } = entry as { name: string; value: string };
+          map[name] = value;
+        }
+      }
+      return map;
+    }
+
+    // Flat object blob: { name: value }. Keep only string values.
+    if (parsed && typeof parsed === "object") {
+      const map: Record<string, string> = {};
+      for (const [name, value] of Object.entries(parsed)) {
+        if (typeof value === "string") map[name] = value;
+      }
+      return map;
+    }
+
+    return null;
+  } catch {
+    // Not JSON — fall through to raw cookie-header parsing.
+  }
+
+  // Raw cookie header string: "name=value; name2=value2".
+  if (trimmed.includes("=")) {
+    const map: Record<string, string> = {};
+    for (const part of trimmed.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!name) continue;
+      map[name] = part.slice(eq + 1).trim();
+    }
+    return map;
+  }
+
+  return null;
+}

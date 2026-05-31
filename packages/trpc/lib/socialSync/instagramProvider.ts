@@ -1,4 +1,7 @@
-import { PLATFORM_REQUIRED_COOKIES } from "@karakeep/shared/types/socialSync";
+import {
+  normalizeCookieInput,
+  PLATFORM_REQUIRED_COOKIES,
+} from "@karakeep/shared/types/socialSync";
 import type {
   SocialSyncProvider,
   SyncItem,
@@ -19,16 +22,17 @@ interface ParsedCookies {
 }
 
 function parseCookies(authCookies: string): ParsedCookies | null {
-  try {
-    const cookies = JSON.parse(authCookies);
-    const valid = PLATFORM_REQUIRED_COOKIES.instagram.every(
-      (key) => typeof cookies[key] === "string" && cookies[key].length > 0,
-    );
-    if (!valid) return null;
-    return cookies as ParsedCookies;
-  } catch {
-    return null;
-  }
+  const cookies = normalizeCookieInput(authCookies);
+  if (!cookies) return null;
+  const valid = PLATFORM_REQUIRED_COOKIES.instagram.every(
+    (key) => typeof cookies[key] === "string" && cookies[key].length > 0,
+  );
+  if (!valid) return null;
+  return {
+    sessionid: cookies.sessionid,
+    csrftoken: cookies.csrftoken,
+    ds_user_id: cookies.ds_user_id,
+  };
 }
 
 function buildHeaders(cookies: ParsedCookies): Record<string, string> {
@@ -36,6 +40,13 @@ function buildHeaders(cookies: ParsedCookies): Record<string, string> {
     "User-Agent": USER_AGENT,
     "X-IG-App-ID": IG_APP_ID,
     "X-CSRFToken": cookies.csrftoken,
+    // Instagram's web API rejects requests whose Sec-Fetch-Site is not
+    // same-origin with HTTP 400 "SecFetch Policy violation.". Node's fetch
+    // sends a violating value by default, so set the browser-like same-origin
+    // values the real web client uses.
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Dest": "empty",
     Cookie: `sessionid=${cookies.sessionid}; csrftoken=${cookies.csrftoken}; ds_user_id=${cookies.ds_user_id}`,
   };
 }

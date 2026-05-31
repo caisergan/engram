@@ -85,6 +85,33 @@ describe("instagramProvider", () => {
       expect(await instagramProvider.validateAuth(VALID_COOKIES)).toBe(true);
     });
 
+    test("accepts a Cookie-Editor array export (what the connect dialog asks for)", async () => {
+      mockFetchResponse({ form_data: {} }, 200);
+      const cookieEditorExport = JSON.stringify([
+        { name: "sessionid", value: "abc123", domain: ".instagram.com" },
+        { name: "csrftoken", value: "xyz789", domain: ".instagram.com" },
+        { name: "ds_user_id", value: "12345", domain: ".instagram.com" },
+        { name: "ig_did", value: "irrelevant", domain: ".instagram.com" },
+      ]);
+      expect(await instagramProvider.validateAuth(cookieEditorExport)).toBe(
+        true,
+      );
+    });
+
+    test("builds the Cookie header from an array export", async () => {
+      const spy = mockFetchResponse({ form_data: {} }, 200);
+      const cookieEditorExport = JSON.stringify([
+        { name: "sessionid", value: "abc123" },
+        { name: "csrftoken", value: "xyz789" },
+        { name: "ds_user_id", value: "12345" },
+      ]);
+      await instagramProvider.validateAuth(cookieEditorExport);
+      const [, options] = spy.mock.calls[0] as [string, RequestInit];
+      const headers = options.headers as Record<string, string>;
+      expect(headers["Cookie"]).toContain("sessionid=abc123");
+      expect(headers["X-CSRFToken"]).toBe("xyz789");
+    });
+
     test("returns false when Instagram API returns 401", async () => {
       mockFetchResponse({}, 401, false);
       expect(await instagramProvider.validateAuth(VALID_COOKIES)).toBe(false);
@@ -116,6 +143,16 @@ describe("instagramProvider", () => {
       expect(headers["Cookie"]).toContain("csrftoken=xyz789");
       expect(headers["Cookie"]).toContain("ds_user_id=12345");
       expect(headers["X-CSRFToken"]).toBe("xyz789");
+    });
+
+    test("sends Sec-Fetch-Site=same-origin to satisfy Instagram's SecFetch policy", async () => {
+      const spy = mockFetchResponse({ form_data: {} }, 200);
+      await instagramProvider.validateAuth(VALID_COOKIES);
+      const [, options] = spy.mock.calls[0] as [string, RequestInit];
+      const headers = options.headers as Record<string, string>;
+      // Node's fetch otherwise sends a Sec-Fetch-Site value Instagram rejects
+      // with HTTP 400 "SecFetch Policy violation.".
+      expect(headers["Sec-Fetch-Site"]).toBe("same-origin");
     });
   });
 
