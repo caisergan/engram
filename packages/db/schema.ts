@@ -1049,6 +1049,40 @@ export const socialSyncHistory = sqliteTable(
   ],
 );
 
+export const socialSyncRuns = sqliteTable(
+  "socialSyncRuns",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    connectionId: text("connectionId")
+      .notNull()
+      .references(() => socialSyncConnections.id, { onDelete: "cascade" }),
+    // Queue job id (req.id) for log correlation; null if unavailable.
+    jobId: text("jobId"),
+    trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
+    status: text("status", { enum: ["running", "success", "failure"] })
+      .notNull()
+      .default("running"),
+    // Drives the live label. Null before the first phase / after finish.
+    phase: text("phase", { enum: ["fetching", "importing", "finalizing"] }),
+    pagesScanned: integer("pagesScanned").notNull().default(0),
+    itemsFound: integer("itemsFound").notNull().default(0),
+    itemsImported: integer("itemsImported").notNull().default(0),
+    itemsFailed: integer("itemsFailed").notNull().default(0),
+    error: text("error"),
+    startedAt: integer("startedAt", { mode: "timestamp" }).notNull(),
+    finishedAt: integer("finishedAt", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("socialSyncRuns_connectionId_startedAt_idx").on(
+      t.connectionId,
+      t.startedAt,
+    ),
+  ],
+);
+
 // Relations
 
 export const userRelations = relations(users, ({ many, one }) => ({
@@ -1282,6 +1316,20 @@ export const importSessionBookmarksRelations = relations(
       fields: [importSessionBookmarks.bookmarkId],
       references: [bookmarks.id],
     }),
+  }),
+);
+
+export const socialSyncRunsRelations = relations(socialSyncRuns, ({ one }) => ({
+  connection: one(socialSyncConnections, {
+    fields: [socialSyncRuns.connectionId],
+    references: [socialSyncConnections.id],
+  }),
+}));
+
+export const socialSyncConnectionsRelations = relations(
+  socialSyncConnections,
+  ({ many }) => ({
+    runs: many(socialSyncRuns),
   }),
 );
 

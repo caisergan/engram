@@ -617,6 +617,13 @@
       "when": 1780231622638,
       "tag": "0087_social_sync_backfill_state",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "6",
+      "when": 1780259164541,
+      "tag": "0088_add_social_sync_runs",
+      "breakpoints": true
     }
   ]
 }
