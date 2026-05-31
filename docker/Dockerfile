@@ -61,24 +61,32 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 COPY . .
 
-# Build the db migration script
-RUN cd packages/db && \
-    pnpm exec ncc build migrate.ts -o /db_migrations && \
+# Build the db migration script.
+# verify-deps-before-run=false stops pnpm from re-installing (and re-downloading)
+# deps before exec; the store cache mount serves any fetch that does happen.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    cd packages/db && \
+    pnpm --config.verify-deps-before-run=false exec ncc build migrate.ts -o /db_migrations && \
     cp -R drizzle /db_migrations
 
 
 # Compile the web app
-RUN (cd apps/web && pnpm exec next build --experimental-build-mode compile)
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    (cd apps/web && pnpm --config.verify-deps-before-run=false exec next build --experimental-build-mode compile)
 
 # Build the worker code
-RUN (cd apps/workers && pnpm --config.verify-deps-before-run=false build)
-RUN CI=true pnpm deploy --node-linker=isolated --legacy --filter @karakeep/workers --prod /prod/workers
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    (cd apps/workers && pnpm --config.verify-deps-before-run=false build)
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    CI=true pnpm deploy --node-linker=isolated --legacy --filter @karakeep/workers --prod /prod/workers
 
 # Build the cli
-RUN (cd apps/cli && pnpm --config.verify-deps-before-run=false build)
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    (cd apps/cli && pnpm --config.verify-deps-before-run=false build)
 
 # Build the mcp server
-RUN (cd apps/mcp && pnpm --config.verify-deps-before-run=false build)
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    (cd apps/mcp && pnpm --config.verify-deps-before-run=false build)
 
 ################# The All-in-one builder ##############
 
