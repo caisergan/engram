@@ -350,3 +350,80 @@ describe("sweepStaleRuns", () => {
     expect(recentRow?.status).toBe("running");
   });
 });
+
+describe("getRuns", () => {
+  test<CustomTestContext>("returns runs newest-first", async ({
+    apiCallers,
+    db,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    await db.insert(socialSyncRuns).values([
+      {
+        connectionId,
+        trigger: "manual",
+        status: "success",
+        startedAt: new Date(Date.now() - 120 * 1000),
+        itemsImported: 1,
+      },
+      {
+        connectionId,
+        trigger: "scheduled",
+        status: "failure",
+        startedAt: new Date(Date.now() - 60 * 1000),
+        error: "nope",
+      },
+    ]);
+    const runs = await apiCallers[0].socialSync.getRuns({ connectionId });
+    expect(runs).toHaveLength(2);
+    expect(runs[0].status).toBe("failure"); // newest
+    expect(runs[1].status).toBe("success");
+  });
+
+  test<CustomTestContext>("rejects another user's connection", async ({
+    apiCallers,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    await expect(
+      apiCallers[1].socialSync.getRuns({ connectionId }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("getConnections.activeRun", () => {
+  test<CustomTestContext>("exposes the running run, latest by startedAt", async ({
+    apiCallers,
+    db,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    await db.insert(socialSyncRuns).values([
+      {
+        connectionId,
+        trigger: "scheduled",
+        status: "running",
+        phase: "fetching",
+        startedAt: new Date(Date.now() - 120 * 1000),
+      },
+      {
+        connectionId,
+        trigger: "manual",
+        status: "running",
+        phase: "importing",
+        itemsFound: 10,
+        itemsImported: 4,
+        startedAt: new Date(Date.now() - 60 * 1000),
+      },
+    ]);
+    const [c] = await apiCallers[0].socialSync.getConnections();
+    expect(c.activeRun).not.toBeNull();
+    expect(c.activeRun?.phase).toBe("importing");
+    expect(c.activeRun?.itemsImported).toBe(4);
+  });
+
+  test<CustomTestContext>("activeRun is null with no running run", async ({
+    apiCallers,
+  }) => {
+    await createConnection(apiCallers[0]);
+    const [c] = await apiCallers[0].socialSync.getConnections();
+    expect(c.activeRun).toBeNull();
+  });
+});

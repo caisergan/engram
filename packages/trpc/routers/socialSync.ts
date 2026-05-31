@@ -1,7 +1,8 @@
 import { experimental_trpcMiddleware, TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
 
-import { socialSyncConnections } from "@karakeep/db/schema";
+import { socialSyncConnections, socialSyncRuns } from "@karakeep/db/schema";
 import {
   zConnectSchema,
   zDisconnectSchema,
@@ -50,20 +51,78 @@ export const socialSyncAppRouter = router({
     const connections = await ctx.db.query.socialSyncConnections.findMany({
       where: eq(socialSyncConnections.userId, ctx.user.id),
     });
-    return connections.map((c) => ({
-      id: c.id,
-      platform: c.platform,
-      enabled: c.enabled,
-      lastSyncedAt: c.lastSyncedAt,
-      lastSyncStatus: c.lastSyncStatus,
-      lastSyncError: c.lastSyncError,
-      syncIntervalMinutes: c.syncIntervalMinutes,
-      autoTagName: c.autoTagName ?? c.platform,
-      totalSynced: c.totalSynced,
-      backfillComplete: c.backfillComplete,
-      createdAt: c.createdAt,
-    }));
+
+    const connIds = connections.map((c) => c.id);
+    const runningRuns = connIds.length
+      ? await ctx.db.query.socialSyncRuns.findMany({
+          where: and(
+            inArray(socialSyncRuns.connectionId, connIds),
+            eq(socialSyncRuns.status, "running"),
+          ),
+          orderBy: (r, { desc }) => [desc(r.startedAt)],
+        })
+      : [];
+
+    // First row per connection wins = latest, because ordered desc by startedAt.
+    const activeByConn = new Map<string, (typeof runningRuns)[number]>();
+    for (const r of runningRuns) {
+      if (!activeByConn.has(r.connectionId)) activeByConn.set(r.connectionId, r);
+    }
+
+    return connections.map((c) => {
+      const run = activeByConn.get(c.id);
+      return {
+        id: c.id,
+        platform: c.platform,
+        enabled: c.enabled,
+        lastSyncedAt: c.lastSyncedAt,
+        lastSyncStatus: c.lastSyncStatus,
+        lastSyncError: c.lastSyncError,
+        syncIntervalMinutes: c.syncIntervalMinutes,
+        autoTagName: c.autoTagName ?? c.platform,
+        totalSynced: c.totalSynced,
+        backfillComplete: c.backfillComplete,
+        createdAt: c.createdAt,
+        activeRun: run
+          ? {
+              id: run.id,
+              phase: run.phase,
+              pagesScanned: run.pagesScanned,
+              itemsFound: run.itemsFound,
+              itemsImported: run.itemsImported,
+              itemsFailed: run.itemsFailed,
+              startedAt: run.startedAt,
+            }
+          : null,
+      };
+    });
   }),
+
+  getRuns: socialSyncProcedure
+    .input(
+      z.object({
+        connectionId: z.string(),
+        limit: z.number().int().min(1).max(50).default(10),
+      }),
+    )
+    .use(ensureConnectionOwnership)
+    .query(async ({ input, ctx }) => {
+      const runs = await ctx.db.query.socialSyncRuns.findMany({
+        where: eq(socialSyncRuns.connectionId, input.connectionId),
+        orderBy: (r, { desc }) => [desc(r.startedAt)],
+        limit: input.limit,
+      });
+      return runs.map((r) => ({
+        id: r.id,
+        trigger: r.trigger,
+        status: r.status,
+        itemsImported: r.itemsImported,
+        itemsFailed: r.itemsFailed,
+        error: r.error,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+      }));
+    }),
 
   connect: socialSyncProcedure
     .input(zConnectSchema)
@@ -103,7 +162,7 @@ export const socialSyncAppRouter = router({
         .returning();
 
       SocialSyncQueue.enqueue(
-        { connectionId: connection.id },
+        { connectionId: connection.id, trigger: "manual" },
         { groupId: ctx.user.id },
       );
     }),
@@ -183,8 +242,12 @@ export const socialSyncAppRouter = router({
         });
       }
       SocialSyncQueue.enqueue(
-        { connectionId: input.connectionId },
+        { connectionId: input.connectionId, trigger: "manual" },
         { groupId: ctx.user.id },
       );
+      await ctx.db
+        .update(socialSyncConnections)
+        .set({ lastSyncStatus: "pending", lastSyncError: null })
+        .where(eq(socialSyncConnections.id, input.connectionId));
     }),
 });
