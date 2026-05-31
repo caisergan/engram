@@ -471,5 +471,24 @@ describe("instagramProvider", () => {
       expect(headers["User-Agent"]).toBeDefined();
       expect(headers["User-Agent"]).toContain("Chrome");
     });
+
+    test("passes an abort signal to the saved posts fetch", async () => {
+      const spy = mockFetchResponse({
+        items: [],
+        more_available: false,
+      });
+      const abortController = new AbortController();
+
+      await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+        signal: abortController.signal,
+      });
+
+      const [, options] = spy.mock.calls[0] as [string, RequestInit];
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    });
   });
 });

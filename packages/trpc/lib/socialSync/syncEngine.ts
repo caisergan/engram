@@ -49,6 +49,7 @@ export interface PlanSyncInput {
   resumeCursor: string | null;
   /** Returns true if an item was already imported on a previous run. */
   isSeen: (platformItemId: string) => Promise<boolean>;
+  signal?: AbortSignal;
   pageSize?: number;
   maxItems?: number;
   maxPages?: number;
@@ -87,6 +88,7 @@ export async function planSync(input: PlanSyncInput): Promise<PlanSyncResult> {
       cursor,
       sinceTimestamp: input.sinceTimestamp,
       limit: pageSize,
+      signal: input.signal,
     });
     pages++;
 

@@ -14,6 +14,7 @@ const VALIDATE_URL =
 const SAVED_POSTS_URL = "https://www.instagram.com/api/v1/feed/saved/posts/";
 const MAX_PAGE_SIZE = 50;
 const VALIDATE_TIMEOUT_MS = 5000;
+const FETCH_SAVED_ITEMS_TIMEOUT_MS = 10000;
 
 interface ParsedCookies {
   sessionid: string;
@@ -57,6 +58,11 @@ function extractHashtags(text: string): string[] {
   return matches.map((m) => m.slice(1));
 }
 
+function buildFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(FETCH_SAVED_ITEMS_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
 export const instagramProvider: SocialSyncProvider = {
   platform: "instagram",
 
@@ -94,6 +100,7 @@ export const instagramProvider: SocialSyncProvider = {
     const response = await fetch(url.toString(), {
       method: "GET",
       headers: buildHeaders(cookies),
+      signal: buildFetchSignal(config.signal),
     });
 
     if (!response.ok) {

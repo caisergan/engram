@@ -147,9 +147,18 @@ async function main() {
     importWorkerPromise = importWorker.start();
   }
 
-  await Promise.any([
+  const workerPromises = workers.map(({ name, worker }) =>
+    worker.run().catch((error: unknown) => {
+      logger.error(
+        `[${name}] Worker stopped unexpectedly: ${error instanceof Error ? error.stack : error}`,
+      );
+      throw error;
+    }),
+  );
+
+  await Promise.race([
     Promise.all([
-      ...workers.map(({ worker }) => worker.run()),
+      ...workerPromises,
       httpServer.serve(),
       ...(importWorkerPromise ? [importWorkerPromise] : []),
     ]),

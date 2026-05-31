@@ -14,7 +14,10 @@ import type { DequeuedJob } from "@karakeep/shared/queueing";
 import { getQueueClient } from "@karakeep/shared/queueing";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import type { ZSocialSyncRequestSchema } from "@karakeep/shared-server";
-import { SocialSyncQueue } from "@karakeep/shared-server";
+import {
+  SocialSyncQueue,
+  zSocialSyncRequestSchema,
+} from "@karakeep/shared-server";
 
 import { decryptCookies } from "@karakeep/trpc/lib/cookieEncryption";
 import { getProvider } from "@karakeep/trpc/lib/socialSync/providers";
@@ -65,6 +68,7 @@ async function run(req: DequeuedJob<ZSocialSyncRequestSchema>) {
       backfillComplete: connection.backfillComplete,
       resumeCursor: connection.lastCursor,
       maxItems: MAX_ITEMS_PER_RUN,
+      signal: req.abortSignal,
       isSeen: async (platformItemId) => {
         const existing = await db.query.socialSyncHistory.findFirst({
           where: and(
@@ -212,6 +216,7 @@ export class SocialSyncWorker {
           concurrency: 1,
           pollIntervalMs: 1000,
           timeoutSecs: 60,
+          validator: zSocialSyncRequestSchema,
         },
       );
     return worker;
@@ -238,7 +243,7 @@ export const SocialSyncRefreshingWorker = cron.schedule(
           lastSyncedAt: true,
         },
       })
-      .then((connections) => {
+      .then(async (connections) => {
         for (const conn of connections) {
           if (conn.lastSyncedAt) {
             const nextDue = new Date(
@@ -251,7 +256,7 @@ export const SocialSyncRefreshingWorker = cron.schedule(
           const intervalSlot = Math.floor(
             now.getTime() / (conn.syncIntervalMinutes * 60 * 1000),
           );
-          SocialSyncQueue.enqueue(
+          await SocialSyncQueue.enqueue(
             { connectionId: conn.id },
             {
               idempotencyKey: `sync:${conn.id}:${intervalSlot}`,
@@ -259,6 +264,9 @@ export const SocialSyncRefreshingWorker = cron.schedule(
             },
           );
         }
+      })
+      .catch((error: unknown) => {
+        logger.error(`[social-sync] Failed to schedule refresh jobs: ${error}`);
       });
   },
   { runOnInit: false, scheduled: false },

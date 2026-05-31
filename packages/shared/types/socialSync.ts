@@ -55,6 +55,7 @@ export interface SocialSyncProvider {
     cursor: string | null;
     sinceTimestamp: Date | null;
     limit: number;
+    signal?: AbortSignal;
   }): Promise<{
     items: SyncItem[];
     nextCursor: string | null;
