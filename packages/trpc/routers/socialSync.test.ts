@@ -1,7 +1,15 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import type { DB } from "@karakeep/db";
+import { socialSyncRuns } from "@karakeep/db/schema";
 
 import type { CustomTestContext } from "../testUtils";
 import { defaultBeforeEach, getApiKeyCallerForPlainKey } from "../testUtils";
+import {
+  SyncRunRecorder,
+  sweepStaleRuns,
+} from "../lib/socialSync/syncRunRecorder";
 
 vi.mock("@karakeep/shared/config", async (original) => {
   const mod = (await original()) as { default: Record<string, unknown> };
@@ -216,5 +224,129 @@ describe("Social Sync Router", () => {
       const updated = await apiCallers[0].socialSync.getConnections();
       expect(updated[0].enabled).toBe(false);
     });
+  });
+});
+
+async function createConnection(apiCaller: {
+  socialSync: {
+    connect: (i: { platform: "instagram"; cookies: string }) => Promise<unknown>;
+    getConnections: () => Promise<{ id: string }[]>;
+  };
+}) {
+  await apiCaller.socialSync.connect({
+    platform: "instagram",
+    cookies: VALID_INSTAGRAM_COOKIES,
+  });
+  const [conn] = await apiCaller.socialSync.getConnections();
+  return conn.id;
+}
+
+describe("SyncRunRecorder", () => {
+  test<CustomTestContext>("records a successful run lifecycle", async ({
+    apiCallers,
+    db,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    const rec = await SyncRunRecorder.start({
+      db,
+      connectionId,
+      trigger: "manual",
+      jobId: "job-1",
+    });
+    expect(rec.runId).not.toBeNull();
+
+    await rec.setItemsFound(3);
+    await rec.setPhase("importing");
+    await rec.incrementImported();
+    await rec.incrementImported();
+    await rec.incrementFailed();
+    await rec.incrementPages();
+    await rec.finishSuccess();
+
+    const [row] = await db
+      .select()
+      .from(socialSyncRuns)
+      .where(eq(socialSyncRuns.id, rec.runId!));
+    expect(row.status).toBe("success");
+    expect(row.itemsFound).toBe(3);
+    expect(row.itemsImported).toBe(2);
+    expect(row.itemsFailed).toBe(1);
+    expect(row.pagesScanned).toBe(1);
+    expect(row.phase).toBeNull();
+    expect(row.finishedAt).not.toBeNull();
+    expect(row.trigger).toBe("manual");
+    expect(row.jobId).toBe("job-1");
+  });
+
+  test<CustomTestContext>("finishFailure records the error", async ({
+    apiCallers,
+    db,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    const rec = await SyncRunRecorder.start({
+      db,
+      connectionId,
+      trigger: "scheduled",
+    });
+    await rec.finishFailure("boom");
+
+    const [row] = await db
+      .select()
+      .from(socialSyncRuns)
+      .where(eq(socialSyncRuns.id, rec.runId!));
+    expect(row.status).toBe("failure");
+    expect(row.error).toBe("boom");
+  });
+
+  test("returns a no-op recorder when the insert fails", async () => {
+    const brokenDb = {
+      insert: () => {
+        throw new Error("db down");
+      },
+    } as unknown as DB;
+    const rec = await SyncRunRecorder.start({
+      db: brokenDb,
+      connectionId: "whatever",
+      trigger: "manual",
+    });
+    expect(rec.runId).toBeNull();
+    // No-op methods must not throw and must not touch the db.
+    await expect(rec.incrementImported()).resolves.toBeUndefined();
+    await expect(rec.finishSuccess()).resolves.toBeUndefined();
+  });
+});
+
+describe("sweepStaleRuns", () => {
+  test<CustomTestContext>("fails old running rows but leaves recent ones", async ({
+    apiCallers,
+    db,
+  }) => {
+    const connectionId = await createConnection(apiCallers[0]);
+    await db.insert(socialSyncRuns).values([
+      {
+        connectionId,
+        trigger: "scheduled",
+        status: "running",
+        startedAt: new Date(Date.now() - 10 * 60 * 1000),
+      },
+      {
+        connectionId,
+        trigger: "manual",
+        status: "running",
+        startedAt: new Date(),
+      },
+    ]);
+
+    await sweepStaleRuns(db, new Date(Date.now() - 3 * 60 * 1000));
+
+    const rows = await db
+      .select()
+      .from(socialSyncRuns)
+      .where(eq(socialSyncRuns.connectionId, connectionId));
+    const oldRow = rows.find((r) => r.trigger === "scheduled");
+    const recentRow = rows.find((r) => r.trigger === "manual");
+    expect(oldRow?.status).toBe("failure");
+    expect(oldRow?.error).toBe("Run timed out");
+    expect(recentRow?.status).toBe("running");
   });
 });
