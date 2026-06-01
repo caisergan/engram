@@ -16,6 +16,7 @@ export const API_KEY_SCOPE_RESOURCES = [
   "webhooks",
   "importSessions",
   "subscriptions",
+  "socialSync",
 ] as const;
 
 export const API_KEY_ADMIN_SCOPE_RESOURCES = [

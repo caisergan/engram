@@ -233,6 +233,7 @@ export const bookmarks = sqliteTable(
         "singlefile",
         "rss",
         "import",
+        "sync",
       ],
     }),
   },
@@ -977,6 +978,111 @@ export const importStagingBookmarks = sqliteTable(
   ],
 );
 
+export const socialSyncConnections = sqliteTable(
+  "socialSyncConnections",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    platform: text("platform", {
+      enum: ["instagram", "x", "youtube"],
+    }).notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    authCookies: text("authCookies").notNull(),
+    lastSyncedAt: integer("lastSyncedAt", { mode: "timestamp" }),
+    lastSyncStatus: text("lastSyncStatus", {
+      enum: ["pending", "success", "failure"],
+    })
+      .notNull()
+      .default("pending"),
+    lastSyncError: text("lastSyncError"),
+    syncIntervalMinutes: integer("syncIntervalMinutes").notNull().default(60),
+    autoTagName: text("autoTagName"),
+    // Resume cursor for paging the saved feed. Null means "start from the top".
+    // Used to continue an in-progress backfill across runs; reset to null once a
+    // run reaches the bottom of history or the already-synced region.
+    lastCursor: text("lastCursor"),
+    // Whether the one-time historical backfill has reached the bottom of the
+    // feed. Once true, every run re-anchors at the top to catch new saves.
+    backfillComplete: integer("backfillComplete", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    totalSynced: integer("totalSynced").notNull().default(0),
+    createdAt: createdAtField(),
+    modifiedAt: modifiedAtField(),
+  },
+  (t) => [
+    index("socialSyncConnections_userId_idx").on(t.userId),
+    unique("socialSyncConnections_userId_platform_uniq").on(
+      t.userId,
+      t.platform,
+    ),
+  ],
+);
+
+export const socialSyncHistory = sqliteTable(
+  "socialSyncHistory",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    connectionId: text("connectionId")
+      .notNull()
+      .references(() => socialSyncConnections.id, { onDelete: "cascade" }),
+    platformItemId: text("platformItemId").notNull(),
+    bookmarkId: text("bookmarkId")
+      .notNull()
+      .references(() => bookmarks.id, { onDelete: "cascade" }),
+    syncedAt: createdAtField(),
+  },
+  (t) => [
+    unique("socialSyncHistory_connectionId_platformItemId_uniq").on(
+      t.connectionId,
+      t.platformItemId,
+    ),
+    index("socialSyncHistory_bookmarkId_idx").on(t.bookmarkId),
+  ],
+);
+
+export const socialSyncRuns = sqliteTable(
+  "socialSyncRuns",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    connectionId: text("connectionId")
+      .notNull()
+      .references(() => socialSyncConnections.id, { onDelete: "cascade" }),
+    // Queue job id (req.id) for log correlation; null if unavailable.
+    jobId: text("jobId"),
+    trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
+    status: text("status", { enum: ["running", "success", "failure"] })
+      .notNull()
+      .default("running"),
+    // Drives the live label. Null before the first phase / after finish.
+    phase: text("phase", { enum: ["fetching", "importing", "finalizing"] }),
+    pagesScanned: integer("pagesScanned").notNull().default(0),
+    itemsFound: integer("itemsFound").notNull().default(0),
+    itemsImported: integer("itemsImported").notNull().default(0),
+    itemsFailed: integer("itemsFailed").notNull().default(0),
+    error: text("error"),
+    startedAt: integer("startedAt", { mode: "timestamp" }).notNull(),
+    finishedAt: integer("finishedAt", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("socialSyncRuns_connectionId_startedAt_idx").on(
+      t.connectionId,
+      t.startedAt,
+    ),
+  ],
+);
+
 // Relations
 
 export const userRelations = relations(users, ({ many, one }) => ({
@@ -1210,6 +1316,20 @@ export const importSessionBookmarksRelations = relations(
       fields: [importSessionBookmarks.bookmarkId],
       references: [bookmarks.id],
     }),
+  }),
+);
+
+export const socialSyncRunsRelations = relations(socialSyncRuns, ({ one }) => ({
+  connection: one(socialSyncConnections, {
+    fields: [socialSyncRuns.connectionId],
+    references: [socialSyncConnections.id],
+  }),
+}));
+
+export const socialSyncConnectionsRelations = relations(
+  socialSyncConnections,
+  ({ many }) => ({
+    runs: many(socialSyncRuns),
   }),
 );
 

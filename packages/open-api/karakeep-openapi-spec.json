@@ -186,6 +186,7 @@
               "singlefile",
               "rss",
               "import",
+              "sync",
               null
             ]
           },
@@ -952,7 +953,8 @@
                           "extension",
                           "singlefile",
                           "rss",
-                          "import"
+                          "import",
+                          "sync"
                         ]
                       }
                     }
@@ -1510,6 +1512,7 @@
                         "singlefile",
                         "rss",
                         "import",
+                        "sync",
                         null
                       ]
                     },
@@ -1647,6 +1650,7 @@
                         "singlefile",
                         "rss",
                         "import",
+                        "sync",
                         null
                       ]
                     },
@@ -3832,6 +3836,7 @@
                               "singlefile",
                               "rss",
                               "import",
+                              "sync",
                               null
                             ]
                           },

@@ -16,6 +16,7 @@ import {
   prepareQueue,
   RuleEngineQueue,
   SearchIndexingQueue,
+  SocialSyncQueue,
   shutdownEventLogger,
   shutdownTracing,
   startQueue,
@@ -35,6 +36,10 @@ import { ImportWorker } from "./workers/importWorker";
 import { OpenAiWorker } from "./workers/inference/inferenceWorker";
 import { RuleEngineWorker } from "./workers/ruleEngineWorker";
 import { SearchIndexingWorker } from "./workers/searchWorker";
+import {
+  SocialSyncRefreshingWorker,
+  SocialSyncWorker,
+} from "./workers/socialSyncWorker";
 import { VideoWorker } from "./workers/videoWorker";
 import { WebhookWorker } from "./workers/webhookWorker";
 
@@ -83,6 +88,10 @@ const workerBuilders = {
     await BackupQueue.ensureInit();
     return BackupWorker.build();
   },
+  socialSync: async () => {
+    await SocialSyncQueue.ensureInit();
+    return SocialSyncWorker.build();
+  },
 } as const;
 
 type WorkerName = keyof typeof workerBuilders | "import";
@@ -126,6 +135,9 @@ async function main() {
   if (workers.some((w) => w.name === "backup")) {
     BackupSchedulingWorker.start();
   }
+  if (workers.some((w) => w.name === "socialSync")) {
+    SocialSyncRefreshingWorker.start();
+  }
 
   // Start import polling worker
   let importWorker: ImportWorker | null = null;
@@ -135,9 +147,18 @@ async function main() {
     importWorkerPromise = importWorker.start();
   }
 
-  await Promise.any([
+  const workerPromises = workers.map(({ name, worker }) =>
+    worker.run().catch((error: unknown) => {
+      logger.error(
+        `[${name}] Worker stopped unexpectedly: ${error instanceof Error ? error.stack : error}`,
+      );
+      throw error;
+    }),
+  );
+
+  await Promise.race([
     Promise.all([
-      ...workers.map(({ worker }) => worker.run()),
+      ...workerPromises,
       httpServer.serve(),
       ...(importWorkerPromise ? [importWorkerPromise] : []),
     ]),
@@ -153,6 +174,9 @@ async function main() {
   }
   if (workers.some((w) => w.name === "backup")) {
     BackupSchedulingWorker.stop();
+  }
+  if (workers.some((w) => w.name === "socialSync")) {
+    SocialSyncRefreshingWorker.stop();
   }
   if (importWorker) {
     importWorker.stop();

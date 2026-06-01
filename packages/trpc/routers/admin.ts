@@ -594,6 +594,7 @@ export const adminAppRouter = router({
             "singlefile",
             "rss",
             "import",
+            "sync",
           ])
           .nullable(),
         createdAt: z.date(),

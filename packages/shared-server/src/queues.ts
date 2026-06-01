@@ -232,6 +232,23 @@ export const FeedQueue = createDeferredQueue<ZFeedRequestSchema>("feed_queue", {
   keepFailedJobs: false,
 });
 
+// Social Sync Worker
+export const zSocialSyncRequestSchema = z.object({
+  connectionId: z.string(),
+  trigger: z.enum(["manual", "scheduled"]).optional().default("scheduled"),
+});
+export type ZSocialSyncRequestSchema = z.infer<typeof zSocialSyncRequestSchema>;
+
+export const SocialSyncQueue = createDeferredQueue<ZSocialSyncRequestSchema>(
+  "social_sync_queue",
+  {
+    defaultJobArgs: {
+      numRetries: 2,
+    },
+    keepFailedJobs: false,
+  },
+);
+
 // Preprocess Assets
 export const zAssetPreprocessingRequestSchema = z.object({
   bookmarkId: z.string(),

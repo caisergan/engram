@@ -235,56 +235,73 @@ export const bookmarksAppRouter = router({
         }
       }
 
-      const bookmark = await ctx.db.transaction(
-        async (tx) => {
+      if (input.type === BookmarkTypes.LINK && input.precrawledArchiveId) {
+        await Asset.ensureOwnership(ctx, input.precrawledArchiveId);
+      }
+
+      if (input.type === BookmarkTypes.ASSET) {
+        const uploadedAsset = await Asset.fromId(ctx, input.assetId);
+        uploadedAsset.ensureOwnership();
+        if (
+          !uploadedAsset.asset.contentType ||
+          !SUPPORTED_BOOKMARK_ASSET_TYPES.has(uploadedAsset.asset.contentType)
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Unsupported asset type",
+          });
+        }
+      }
+
+      const bookmark = ctx.db.transaction(
+        (tx) => {
           // Check user quota
-          const quotaResult = await QuotaService.canCreateBookmark(
-            tx,
-            ctx.user.id,
-          );
+          const quotaResult = QuotaService.canCreateBookmark(tx, ctx.user.id);
           if (!quotaResult.result) {
             throw new TRPCError({
               code: "FORBIDDEN",
               message: quotaResult.error,
             });
           }
-          const bookmark = (
-            await tx
-              .insert(bookmarks)
-              .values({
-                userId: ctx.user.id,
-                title: input.title,
-                type: input.type,
-                archived: input.archived,
-                favourited: input.favourited,
-                note: input.note,
-                summary: input.summary,
-                createdAt: input.createdAt,
-                source: input.source,
-                // Only links currently support summarization. Let's set the status to null for other types for now.
-                summarizationStatus:
-                  input.type === BookmarkTypes.LINK ? "pending" : null,
-              })
-              .returning()
-          )[0];
+          const bookmark = tx
+            .insert(bookmarks)
+            .values({
+              userId: ctx.user.id,
+              title: input.title,
+              type: input.type,
+              archived: input.archived,
+              favourited: input.favourited,
+              note: input.note,
+              summary: input.summary,
+              createdAt: input.createdAt,
+              source: input.source,
+              // Only links currently support summarization. Let's set the status to null for other types for now.
+              summarizationStatus:
+                input.type === BookmarkTypes.LINK ? "pending" : null,
+            })
+            .returning()
+            .get();
+          if (!bookmark) {
+            throw new Error("Failed to create bookmark");
+          }
 
           let content: ZBookmarkContent;
 
           switch (input.type) {
             case BookmarkTypes.LINK: {
-              const link = (
-                await tx
-                  .insert(bookmarkLinks)
-                  .values({
-                    id: bookmark.id,
-                    url: input.url.trim(),
-                  })
-                  .returning()
-              )[0];
+              const link = tx
+                .insert(bookmarkLinks)
+                .values({
+                  id: bookmark.id,
+                  url: input.url.trim(),
+                })
+                .returning()
+                .get();
+              if (!link) {
+                throw new Error("Failed to create bookmark link");
+              }
               if (input.precrawledArchiveId) {
-                await Asset.ensureOwnership(ctx, input.precrawledArchiveId);
-                await tx
-                  .update(assets)
+                tx.update(assets)
                   .set({
                     bookmarkId: bookmark.id,
                     assetType: AssetTypes.LINK_PRECRAWLED_ARCHIVE,
@@ -294,7 +311,8 @@ export const bookmarksAppRouter = router({
                       eq(assets.id, input.precrawledArchiveId),
                       eq(assets.userId, ctx.user.id),
                     ),
-                  );
+                  )
+                  .run();
               }
               content = {
                 type: BookmarkTypes.LINK,
@@ -303,16 +321,18 @@ export const bookmarksAppRouter = router({
               break;
             }
             case BookmarkTypes.TEXT: {
-              const text = (
-                await tx
-                  .insert(bookmarkTexts)
-                  .values({
-                    id: bookmark.id,
-                    text: input.text,
-                    sourceUrl: input.sourceUrl,
-                  })
-                  .returning()
-              )[0];
+              const text = tx
+                .insert(bookmarkTexts)
+                .values({
+                  id: bookmark.id,
+                  text: input.text,
+                  sourceUrl: input.sourceUrl,
+                })
+                .returning()
+                .get();
+              if (!text) {
+                throw new Error("Failed to create bookmark text");
+              }
               content = {
                 type: BookmarkTypes.TEXT,
                 text: text.text ?? "",
@@ -321,7 +341,7 @@ export const bookmarksAppRouter = router({
               break;
             }
             case BookmarkTypes.ASSET: {
-              const [asset] = await tx
+              const asset = tx
                 .insert(bookmarkAssets)
                 .values({
                   id: bookmark.id,
@@ -332,22 +352,12 @@ export const bookmarksAppRouter = router({
                   fileName: input.fileName ?? null,
                   sourceUrl: input.sourceUrl ?? null,
                 })
-                .returning();
-              const uploadedAsset = await Asset.fromId(ctx, input.assetId);
-              uploadedAsset.ensureOwnership();
-              if (
-                !uploadedAsset.asset.contentType ||
-                !SUPPORTED_BOOKMARK_ASSET_TYPES.has(
-                  uploadedAsset.asset.contentType,
-                )
-              ) {
-                throw new TRPCError({
-                  code: "BAD_REQUEST",
-                  message: "Unsupported asset type",
-                });
+                .returning()
+                .get();
+              if (!asset) {
+                throw new Error("Failed to create bookmark asset");
               }
-              await tx
-                .update(assets)
+              tx.update(assets)
                 .set({
                   bookmarkId: bookmark.id,
                   assetType: AssetTypes.BOOKMARK_ASSET,
@@ -357,7 +367,8 @@ export const bookmarksAppRouter = router({
                     eq(assets.id, input.assetId),
                     eq(assets.userId, ctx.user.id),
                   ),
-                );
+                )
+                .run();
               content = {
                 type: BookmarkTypes.ASSET,
                 assetType: asset.assetType,
@@ -472,7 +483,7 @@ export const bookmarksAppRouter = router({
         });
       }
 
-      await ctx.db.transaction(async (tx) => {
+      ctx.db.transaction((tx) => {
         let somethingChanged = false;
 
         // Update link-specific fields if any are provided
@@ -504,10 +515,11 @@ export const bookmarksAppRouter = router({
         }
 
         if (Object.keys(linkUpdateData).length > 0) {
-          const result = await tx
+          const result = tx
             .update(bookmarkLinks)
             .set(linkUpdateData)
-            .where(eq(bookmarkLinks.id, input.bookmarkId));
+            .where(eq(bookmarkLinks.id, input.bookmarkId))
+            .run();
           if (result.changes == 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -519,12 +531,13 @@ export const bookmarksAppRouter = router({
         }
 
         if (input.text) {
-          const result = await tx
+          const result = tx
             .update(bookmarkTexts)
             .set({
               text: input.text,
             })
-            .where(eq(bookmarkTexts.id, input.bookmarkId));
+            .where(eq(bookmarkTexts.id, input.bookmarkId))
+            .run();
 
           if (result.changes == 0) {
             throw new TRPCError({
@@ -537,12 +550,13 @@ export const bookmarksAppRouter = router({
         }
 
         if (input.assetContent !== undefined) {
-          const result = await tx
+          const result = tx
             .update(bookmarkAssets)
             .set({
               content: input.assetContent,
             })
-            .where(and(eq(bookmarkAssets.id, input.bookmarkId)));
+            .where(and(eq(bookmarkAssets.id, input.bookmarkId)))
+            .run();
 
           if (result.changes == 0) {
             throw new TRPCError({
@@ -586,15 +600,15 @@ export const bookmarksAppRouter = router({
         }
 
         if (Object.keys(commonUpdateData).length > 1 || somethingChanged) {
-          await tx
-            .update(bookmarks)
+          tx.update(bookmarks)
             .set(commonUpdateData)
             .where(
               and(
                 eq(bookmarks.userId, ctx.user.id),
                 eq(bookmarks.id, input.bookmarkId),
               ),
-            );
+            )
+            .run();
         }
       });
 
@@ -665,29 +679,30 @@ export const bookmarksAppRouter = router({
     )
     .use(ensureBookmarkOwnership)
     .mutation(async ({ input, ctx }) => {
-      await ctx.db.transaction(async (tx) => {
-        const res = await tx
+      ctx.db.transaction((tx) => {
+        const res = tx
           .update(bookmarkTexts)
           .set({
             text: input.text,
           })
           .where(and(eq(bookmarkTexts.id, input.bookmarkId)))
-          .returning();
+          .returning()
+          .all();
         if (res.length == 0) {
           throw new TRPCError({
             code: "NOT_FOUND",
             message: "Bookmark not found",
           });
         }
-        await tx
-          .update(bookmarks)
+        tx.update(bookmarks)
           .set({ modifiedAt: new Date() })
           .where(
             and(
               eq(bookmarks.id, input.bookmarkId),
               eq(bookmarks.userId, ctx.user.id),
             ),
-          );
+          )
+          .run();
       });
       await Promise.all([
         triggerSearchReindex(input.bookmarkId, {
@@ -1228,24 +1243,25 @@ export const bookmarksAppRouter = router({
       const allIdsToAttach = attachTagsWithNames.map((t) => t.id);
       const idsToRemove = detachTagsWithNames.map((t) => t.id);
 
-      const res = await ctx.db.transaction(async (tx) => {
+      const res = ctx.db.transaction((tx) => {
         let numChanges = 0;
         // Detaches
         if (idsToRemove.length > 0) {
-          const res = await tx
+          const res = tx
             .delete(tagsOnBookmarks)
             .where(
               and(
                 eq(tagsOnBookmarks.bookmarkId, input.bookmarkId),
                 inArray(tagsOnBookmarks.tagId, idsToRemove),
               ),
-            );
+            )
+            .run();
           numChanges += res.changes;
         }
 
         // Attach tags
         if (allIdsToAttach.length > 0) {
-          const res = await tx
+          const res = tx
             .insert(tagsOnBookmarks)
             .values(
               allIdsToAttach.map((i) => ({
@@ -1254,21 +1270,22 @@ export const bookmarksAppRouter = router({
                 attachedBy: tagIdToAttachedBy.get(i) ?? "human",
               })),
             )
-            .onConflictDoNothing();
+            .onConflictDoNothing()
+            .run();
           numChanges += res.changes;
         }
 
         // Update bookmark modified timestamp
         if (numChanges > 0) {
-          await tx
-            .update(bookmarks)
+          tx.update(bookmarks)
             .set({ modifiedAt: new Date() })
             .where(
               and(
                 eq(bookmarks.id, input.bookmarkId),
                 eq(bookmarks.userId, ctx.user.id),
               ),
-            );
+            )
+            .run();
         }
 
         return {

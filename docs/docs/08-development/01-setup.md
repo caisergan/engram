@@ -34,6 +34,7 @@ Karakeep uses `node` version 24. To install it, you can use `nvm` [^1]
 
 ```
 $ nvm install 24
+$ nvm use 24
 ```
 
 Verify node version using this command:
@@ -47,7 +48,7 @@ installed on your machine, and you don't need to do anything. To verify the `cor
 
 ```
 $ command -v corepack
-/home/<user>/.nvm/versions/node/v22.14.0/bin/corepack
+/home/<user>/.nvm/versions/node/v24.0.0/bin/corepack
 ```
 
 To enable `corepack` run the following command:
@@ -61,6 +62,10 @@ Then, from the root of the repository, install the packages and dependencies usi
 ```
 $ pnpm install
 ```
+
+The root package declares Node 24 as a strict engine. The root preflight and `start-dev.sh` also check the Node major
+before they run. If you previously installed dependencies with another Node major, switch back to Node 24 and run
+`pnpm install` again so native modules such as `better-sqlite3` are rebuilt for the supported runtime.
 
 Output of a successful `pnpm install` run should look something like:
 
