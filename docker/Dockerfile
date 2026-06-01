@@ -47,6 +47,13 @@ COPY tooling/prettier/package.json ./tooling/prettier/
 COPY tooling/tailwind/package.json ./tooling/tailwind/
 COPY tooling/typescript/package.json ./tooling/typescript/
 COPY ./patches ./patches
+# The root `preinstall` hook runs `node ./tools/check-node-version.mjs`, which
+# reads `.nvmrc`; both must exist before `pnpm install` (the full source tree
+# is only copied later via `COPY . .`). Copy only the script — not all of
+# `tools/` — so the `tools/*` workspace packages stay absent during the frozen
+# install, exactly as before.
+COPY .nvmrc ./
+COPY ./tools/check-node-version.mjs ./tools/check-node-version.mjs
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
