@@ -6,6 +6,7 @@ packages:
   - "docs"
 
 nodeLinker: hoisted
+engineStrict: true
 
 allowBuilds:
   '@sentry/cli': true

@@ -22,6 +22,13 @@ if ! command_exists pnpm; then
     exit 1
 fi
 
+if ! command_exists node; then
+    echo "Error: Node.js is not installed. Please install Node 24 first."
+    exit 1
+fi
+
+node ./tools/check-node-version.mjs || exit 1
+
 # Start Meilisearch if not already running
 if ! port_in_use 7700; then
     echo "Starting Meilisearch..."

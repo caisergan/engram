@@ -18,6 +18,8 @@
     "web:portless": "pnpm --filter @karakeep/web run dev:portless",
     "android": "pnpm --filter @karakeep/mobile android",
     "ios": "pnpm --filter @karakeep/mobile ios",
+    "check:runtime": "node ./tools/check-node-version.mjs",
+    "preinstall": "node ./tools/check-node-version.mjs",
     "prepare": "husky",
     "format": "turbo --no-daemon format --continue",
     "format:fix": "turbo --no-daemon format:fix --continue",
@@ -25,8 +27,8 @@
     "lint:fix": "turbo --no-daemon lint:fix --continue",
     "test": "turbo --no-daemon test",
     "typecheck": "turbo --no-daemon typecheck",
-    "preflight": "turbo run --no-daemon typecheck lint format",
-    "preflight:fix": "turbo run --no-daemon typecheck lint:fix format:fix"
+    "preflight": "node ./tools/check-node-version.mjs && turbo run --no-daemon typecheck lint format",
+    "preflight:fix": "node ./tools/check-node-version.mjs && turbo run --no-daemon typecheck lint:fix format:fix"
   },
   "dependencies": {
     "husky": "^9.0.11"
@@ -37,6 +39,9 @@
     "oxlint": "^1.60.0",
     "sherif": "^1.6.1",
     "turbo": "^2.5.5"
+  },
+  "engines": {
+    "node": "24.x"
   },
   "packageManager": "pnpm@11.2.1"
 }
