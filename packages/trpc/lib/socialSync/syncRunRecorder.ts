@@ -1,4 +1,5 @@
-import { and, eq, lt, sql, type SQL } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
 import type { DB } from "@karakeep/db";

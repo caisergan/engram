@@ -66,7 +66,8 @@ export const socialSyncAppRouter = router({
     // First row per connection wins = latest, because ordered desc by startedAt.
     const activeByConn = new Map<string, (typeof runningRuns)[number]>();
     for (const r of runningRuns) {
-      if (!activeByConn.has(r.connectionId)) activeByConn.set(r.connectionId, r);
+      if (!activeByConn.has(r.connectionId))
+        activeByConn.set(r.connectionId, r);
     }
 
     return connections.map((c) => {

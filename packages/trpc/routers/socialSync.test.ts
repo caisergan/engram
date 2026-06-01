@@ -229,7 +229,10 @@ describe("Social Sync Router", () => {
 
 async function createConnection(apiCaller: {
   socialSync: {
-    connect: (i: { platform: "instagram"; cookies: string }) => Promise<unknown>;
+    connect: (i: {
+      platform: "instagram";
+      cookies: string;
+    }) => Promise<unknown>;
     getConnections: () => Promise<{ id: string }[]>;
   };
 }) {
