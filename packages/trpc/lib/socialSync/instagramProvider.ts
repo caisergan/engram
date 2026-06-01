@@ -58,6 +58,58 @@ function extractHashtags(text: string): string[] {
   return matches.map((m) => m.slice(1));
 }
 
+interface ImageCandidate {
+  url?: unknown;
+  width?: unknown;
+}
+
+interface ImageVersions {
+  candidates?: unknown;
+}
+
+/** Pick the highest-resolution candidate URL from an `image_versions2` blob. */
+function pickBestCandidate(
+  imageVersions: ImageVersions | null | undefined,
+): string | undefined {
+  const candidates = imageVersions?.candidates;
+  if (!Array.isArray(candidates)) return undefined;
+
+  let best: { url: string; width: number } | undefined;
+  for (const candidate of candidates as ImageCandidate[]) {
+    if (typeof candidate?.url !== "string" || candidate.url.length === 0) {
+      continue;
+    }
+    const width = typeof candidate.width === "number" ? candidate.width : 0;
+    if (!best || width > best.width) {
+      best = { url: candidate.url, width };
+    }
+  }
+  return best?.url;
+}
+
+/**
+ * Resolve the best preview image for a saved media object. Photos and reels
+ * carry their image (or video cover) in `image_versions2`; carousels nest the
+ * frames in `carousel_media`, so we fall back to the first frame's image.
+ */
+function extractImageUrl(media: Record<string, unknown>): string | undefined {
+  const direct = pickBestCandidate(
+    media.image_versions2 as ImageVersions | null | undefined,
+  );
+  if (direct) return direct;
+
+  const carousel = media.carousel_media;
+  if (Array.isArray(carousel)) {
+    for (const frame of carousel as Record<string, unknown>[]) {
+      const frameImage = pickBestCandidate(
+        frame?.image_versions2 as ImageVersions | null | undefined,
+      );
+      if (frameImage) return frameImage;
+    }
+  }
+  return undefined;
+}
+
 function buildFetchSignal(signal?: AbortSignal): AbortSignal {
   const timeoutSignal = AbortSignal.timeout(FETCH_SAVED_ITEMS_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
@@ -134,12 +186,15 @@ export const instagramProvider: SocialSyncProvider = {
       const username = user?.username ?? "unknown";
       const captionText = caption?.text ?? "";
       const hashtags = extractHashtags(captionText);
+      const imageUrl = extractImageUrl(media);
 
       items.push({
         platformItemId: code,
         url: itemUrl,
         title: `@${username}`,
         tags: ["instagram", ...hashtags],
+        description: captionText.length > 0 ? captionText : undefined,
+        imageUrl,
       });
     }
 

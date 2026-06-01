@@ -148,7 +148,11 @@ function PlatformCard({
   ) : connection.activeRun ? (
     <Badge variant="default">{t("social_sync.run_status_running")}</Badge>
   ) : connection.lastSyncStatus === "failure" ? (
-    <Badge variant="destructive">{t("social_sync.auth_expired")}</Badge>
+    <Badge variant="destructive">
+      {connection.lastSyncError?.startsWith("Authentication expired")
+        ? t("social_sync.auth_expired")
+        : t("social_sync.sync_failed")}
+    </Badge>
   ) : connection.lastSyncStatus === "pending" ? (
     <Badge variant="secondary">{t("social_sync.queued")}</Badge>
   ) : (
@@ -169,14 +173,14 @@ function PlatformCard({
             </Button>
           ) : (
             <>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <span>
+              <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                <span className="min-w-0">
                   {t("social_sync.total_synced", {
                     count: connection.totalSynced,
                   })}
                 </span>
                 {connection.lastSyncedAt && (
-                  <span>
+                  <span className="min-w-0">
                     {t("social_sync.last_synced")}
                     <RelativeTime date={connection.lastSyncedAt} />
                   </span>
@@ -199,7 +203,7 @@ function PlatformCard({
                 </p>
               )}
 
-              <div className="flex items-center justify-between">
+              <div className="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
                 <Label>{t("social_sync.sync_interval")}</Label>
                 <Select
                   value={String(connection.syncIntervalMinutes)}
@@ -210,7 +214,7 @@ function PlatformCard({
                     })
                   }
                 >
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-full sm:w-40 sm:justify-self-end">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -223,10 +227,10 @@ function PlatformCard({
                 </Select>
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
                 <Label>{t("social_sync.auto_tag")}</Label>
                 <Input
-                  className="w-40"
+                  className="w-full sm:w-40 sm:justify-self-end"
                   value={connection.autoTagName}
                   onChange={(e) =>
                     updateSettingsMutation.mutate({
@@ -237,8 +241,8 @@ function PlatformCard({
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <Label>Enabled</Label>
+              <div className="flex min-h-11 items-center justify-between gap-3">
+                <Label>{t("social_sync.enabled")}</Label>
                 <Switch
                   checked={connection.enabled}
                   onCheckedChange={(checked) =>
@@ -250,7 +254,7 @@ function PlatformCard({
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="outline"

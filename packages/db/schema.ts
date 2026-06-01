@@ -1041,7 +1041,7 @@ export const socialSyncHistory = sqliteTable(
     syncedAt: createdAtField(),
   },
   (t) => [
-    index("socialSyncHistory_connectionId_platformItemId_idx").on(
+    unique("socialSyncHistory_connectionId_platformItemId_uniq").on(
       t.connectionId,
       t.platformItemId,
     ),

@@ -45,6 +45,18 @@ export interface SyncItem {
   url: string;
   title?: string;
   tags?: string[];
+  /**
+   * Post caption / description text. Providers that fetch from an authenticated
+   * API (e.g. Instagram) populate this so the importer doesn't have to rely on a
+   * public crawl that would hit a login wall.
+   */
+  description?: string;
+  /**
+   * Best available preview image (photo, reel cover, or first carousel frame).
+   * The importer downloads this into a banner asset because the CDN URLs are
+   * signed and expire, so persisting the URL alone would yield broken images.
+   */
+  imageUrl?: string;
 }
 
 export interface SocialSyncProvider {
@@ -157,4 +169,18 @@ export function normalizeCookieInput(
   }
 
   return null;
+}
+
+/**
+ * True when `url` points at instagram.com (or a subdomain). Instagram post
+ * pages can't be crawled server-side without a session (they redirect to a
+ * login wall), so the crawler uses this to skip re-fetching content that the
+ * social-sync importer already populated from the authenticated API.
+ */
+export function isInstagramUrl(url: string): boolean {
+  try {
+    return /(^|\.)instagram\.com$/.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
 }

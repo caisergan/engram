@@ -18,8 +18,12 @@ export function SocialSyncProgress({ run }: { run: ActiveRun | null }) {
   if (!run) return null;
 
   const determinate = run.phase === "importing" && run.itemsFound > 0;
+  const processedItems = Math.min(
+    run.itemsFound,
+    run.itemsImported + run.itemsFailed,
+  );
   const pct = determinate
-    ? Math.min(100, Math.round((run.itemsImported / run.itemsFound) * 100))
+    ? Math.min(100, Math.round((processedItems / run.itemsFound) * 100))
     : run.phase === "finalizing"
       ? 95
       : null;
@@ -36,8 +40,8 @@ export function SocialSyncProgress({ run }: { run: ActiveRun | null }) {
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>
+      <div className="flex items-start justify-between gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 break-words">
           {label}
           {run.itemsFailed > 0
             ? ` · ${t("social_sync.progress_failed_suffix", { count: run.itemsFailed })}`

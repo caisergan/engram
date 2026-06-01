@@ -71,6 +71,38 @@ describe("Bookmark Routes", () => {
     expect(res.content.type).toEqual(BookmarkTypes.LINK);
   });
 
+  test<CustomTestContext>("create bookmark commits with the synchronous sqlite transaction driver", async ({
+    apiCallers,
+    db,
+  }) => {
+    const api = apiCallers[0].bookmarks;
+    const bookmark = await api.createBookmark({
+      url: "https://sync-transaction.example",
+      type: BookmarkTypes.LINK,
+      source: "sync",
+    });
+
+    const [storedBookmark] = await db
+      .select({
+        id: bookmarks.id,
+        source: bookmarks.source,
+      })
+      .from(bookmarks)
+      .where(eq(bookmarks.id, bookmark.id));
+    const [storedLink] = await db
+      .select({ url: bookmarkLinks.url })
+      .from(bookmarkLinks)
+      .where(eq(bookmarkLinks.id, bookmark.id));
+
+    expect(storedBookmark).toEqual({
+      id: bookmark.id,
+      source: "sync",
+    });
+    expect(storedLink).toEqual({
+      url: "https://sync-transaction.example",
+    });
+  });
+
   test<CustomTestContext>("api key with read scope can read bookmarks but not write", async ({
     apiCallers,
     db,

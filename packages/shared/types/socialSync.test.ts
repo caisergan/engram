@@ -2,9 +2,29 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildCookieBlob,
+  isInstagramUrl,
   normalizeCookieInput,
   PLATFORM_REQUIRED_COOKIES,
 } from "./socialSync";
+
+describe("isInstagramUrl", () => {
+  test("matches instagram.com and its subdomains", () => {
+    expect(isInstagramUrl("https://www.instagram.com/p/ABC123/")).toBe(true);
+    expect(isInstagramUrl("https://instagram.com/reel/XYZ/")).toBe(true);
+    expect(isInstagramUrl("http://m.instagram.com/p/ABC/")).toBe(true);
+  });
+
+  test("does not match look-alike or unrelated hosts", () => {
+    expect(isInstagramUrl("https://notinstagram.com/p/ABC/")).toBe(false);
+    expect(isInstagramUrl("https://instagram.com.evil.com/p/ABC/")).toBe(false);
+    expect(isInstagramUrl("https://example.com/instagram.com")).toBe(false);
+  });
+
+  test("returns false for non-URL input", () => {
+    expect(isInstagramUrl("not a url")).toBe(false);
+    expect(isInstagramUrl("")).toBe(false);
+  });
+});
 
 describe("PLATFORM_REQUIRED_COOKIES", () => {
   test("declares the required cookies per platform", () => {

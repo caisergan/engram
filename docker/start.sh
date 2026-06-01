@@ -14,6 +14,31 @@ ok()   { echo -e "${GREEN}[engram]${NC} $1"; }
 warn() { echo -e "${YELLOW}[engram]${NC} $1"; }
 err()  { echo -e "${RED}[engram]${NC} $1"; }
 
+MIN_DOCKER_MEMORY_BYTES=$((6 * 1024 * 1024 * 1024))
+RECOMMENDED_DOCKER_MEMORY_GIB=8
+
+format_gib() {
+  awk -v bytes="$1" 'BEGIN { printf "%.1f GiB", bytes / 1024 / 1024 / 1024 }'
+}
+
+check_docker_memory_for_build() {
+  local docker_memory
+  docker_memory=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo "")
+
+  if ! [[ "$docker_memory" =~ ^[0-9]+$ ]]; then
+    warn "Could not read Docker memory limit; continuing with build."
+    return
+  fi
+
+  if [ "$docker_memory" -lt "$MIN_DOCKER_MEMORY_BYTES" ]; then
+    err "Docker is limited to $(format_gib "$docker_memory") of memory."
+    warn "The Engram image build needs at least $(format_gib "$MIN_DOCKER_MEMORY_BYTES"); ${RECOMMENDED_DOCKER_MEMORY_GIB} GiB is recommended."
+    warn "Docker Desktop: Settings > Resources > Memory > ${RECOMMENDED_DOCKER_MEMORY_GIB} GB, then Apply & Restart."
+    warn "Without more memory, the build fails later with: ResourceExhausted: cannot allocate memory."
+    exit 1
+  fi
+}
+
 # Ensure .env exists
 if [ ! -f .env ]; then
   err ".env file not found in docker/"
@@ -51,21 +76,24 @@ else
   log "No changes since last build — reusing existing image."
 fi
 
-# Stop any running containers for this project
-if docker compose -p engram ps -q 2>/dev/null | grep -q .; then
-  log "Stopping existing engram containers..."
-  docker compose -p engram down --remove-orphans
-  ok "Stopped."
-fi
-
 if [ "$NEED_BUILD" = "true" ]; then
-  # BuildKit enables the pnpm store cache mount in the Dockerfile
+  check_docker_memory_for_build
+
+  # Build while the current stack is still running. Only restart containers after
+  # a successful image build so a Docker build failure does not take the app down.
   export DOCKER_BUILDKIT=1
   export COMPOSE_DOCKER_CLI_BUILD=1
   log "Building image (pnpm packages cached across builds)..."
   docker compose -p engram build
   echo "$CURRENT_HASH" > "$HASH_FILE"
   ok "Build complete."
+fi
+
+# Stop any running containers for this project
+if docker compose -p engram ps -q 2>/dev/null | grep -q .; then
+  log "Stopping existing engram containers..."
+  docker compose -p engram down --remove-orphans
+  ok "Stopped."
 fi
 
 # Start all services

@@ -217,6 +217,158 @@ describe("instagramProvider", () => {
       );
     });
 
+    test("extracts the caption text into description", async () => {
+      mockFetchResponse({
+        items: [
+          makeInstagramItem({
+            caption: { text: "A full caption with detail #design" },
+          }),
+        ],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].description).toBe(
+        "A full caption with detail #design",
+      );
+    });
+
+    test("leaves description undefined when there is no caption", async () => {
+      mockFetchResponse({
+        items: [makeInstagramItem({ caption: null })],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].description).toBeUndefined();
+    });
+
+    test("picks the highest-resolution candidate image for a photo", async () => {
+      mockFetchResponse({
+        items: [
+          makeInstagramItem({
+            image_versions2: {
+              candidates: [
+                { url: "https://cdn/small.jpg", width: 320, height: 320 },
+                { url: "https://cdn/large.jpg", width: 1080, height: 1080 },
+                { url: "https://cdn/medium.jpg", width: 640, height: 640 },
+              ],
+            },
+          }),
+        ],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].imageUrl).toBe("https://cdn/large.jpg");
+    });
+
+    test("uses the first carousel frame image for a carousel post", async () => {
+      mockFetchResponse({
+        items: [
+          makeInstagramItem({
+            media_type: 8,
+            // A carousel container has no top-level image_versions2; the frames
+            // each carry their own.
+            image_versions2: undefined,
+            carousel_media: [
+              {
+                image_versions2: {
+                  candidates: [
+                    {
+                      url: "https://cdn/frame1.jpg",
+                      width: 1080,
+                      height: 1080,
+                    },
+                  ],
+                },
+              },
+              {
+                image_versions2: {
+                  candidates: [
+                    {
+                      url: "https://cdn/frame2.jpg",
+                      width: 1080,
+                      height: 1080,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        ],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].imageUrl).toBe("https://cdn/frame1.jpg");
+    });
+
+    test("uses the cover image for a reel", async () => {
+      mockFetchResponse({
+        items: [
+          makeInstagramItem({
+            product_type: "clips",
+            image_versions2: {
+              candidates: [
+                { url: "https://cdn/reel-cover.jpg", width: 720, height: 1280 },
+              ],
+            },
+          }),
+        ],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].imageUrl).toBe("https://cdn/reel-cover.jpg");
+    });
+
+    test("leaves imageUrl undefined when no image candidates are present", async () => {
+      mockFetchResponse({
+        items: [makeInstagramItem({ image_versions2: undefined })],
+        more_available: false,
+      });
+
+      const result = await instagramProvider.fetchSavedItems({
+        authCookies: VALID_COOKIES,
+        cursor: null,
+        sinceTimestamp: null,
+        limit: 50,
+      });
+
+      expect(result.items[0].imageUrl).toBeUndefined();
+    });
+
     test("extracts hashtags from caption into tags", async () => {
       mockFetchResponse({
         items: [
