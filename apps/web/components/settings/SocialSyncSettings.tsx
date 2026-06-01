@@ -25,6 +25,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import RelativeTime from "@/components/ui/relative-time";
+import { SocialSyncProgress } from "@/components/settings/SocialSyncProgress";
+import { SocialSyncRunHistory } from "@/components/settings/SocialSyncRunHistory";
 import { useTranslation } from "@/lib/i18n/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -55,9 +57,11 @@ function PlatformCard({
   const { t } = useTranslation();
   const api = useTRPC();
   const queryClient = useQueryClient();
-  const connectionsQuery = useQuery(
-    api.socialSync.getConnections.queryOptions(),
-  );
+  const connectionsQuery = useQuery({
+    ...api.socialSync.getConnections.queryOptions(),
+    refetchInterval: (query) =>
+      query.state.data?.some((c) => c.activeRun) ? 2000 : false,
+  });
   const connection = connectionsQuery.data?.find(
     (c) => c.platform === platform.id,
   );
@@ -141,8 +145,12 @@ function PlatformCard({
 
   const statusBadge = !connection ? (
     <Badge variant="secondary">{t("social_sync.not_connected")}</Badge>
+  ) : connection.activeRun ? (
+    <Badge variant="default">{t("social_sync.run_status_running")}</Badge>
   ) : connection.lastSyncStatus === "failure" ? (
     <Badge variant="destructive">{t("social_sync.auth_expired")}</Badge>
+  ) : connection.lastSyncStatus === "pending" ? (
+    <Badge variant="secondary">{t("social_sync.queued")}</Badge>
   ) : (
     <Badge variant="default">{t("social_sync.connected")}</Badge>
   );
@@ -174,6 +182,8 @@ function PlatformCard({
                   </span>
                 )}
               </div>
+
+              <SocialSyncProgress run={connection.activeRun ?? null} />
 
               {!connection.backfillComplete &&
                 connection.enabled &&
@@ -268,6 +278,8 @@ function PlatformCard({
                   {t("social_sync.disconnect")}
                 </Button>
               </div>
+
+              <SocialSyncRunHistory connectionId={connection.id} />
             </>
           )}
         </CardContent>

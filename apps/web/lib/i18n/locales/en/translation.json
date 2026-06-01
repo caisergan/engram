@@ -1222,6 +1222,17 @@
     "cookies_placeholder": "Paste cookies as JSON...",
     "connected_success": "Connected to {{platform}}",
     "disconnected_success": "Disconnected from {{platform}}",
-    "sync_triggered": "Sync started for {{platform}}"
+    "sync_triggered": "Sync started for {{platform}}",
+    "progress_scanning": "Scanning saved feed… page {{page}}",
+    "progress_importing": "{{imported}} / {{found}} imported",
+    "progress_failed_suffix": "{{count}} failed",
+    "progress_finishing": "Finishing…",
+    "recent_runs": "Recent runs",
+    "no_runs": "No sync runs yet.",
+    "run_imported": "+{{count}} imported",
+    "run_trigger_manual": "Manual",
+    "run_trigger_scheduled": "Scheduled",
+    "run_status_running": "Syncing…",
+    "queued": "Queued"
   }
 }
