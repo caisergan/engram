@@ -38,6 +38,7 @@ const PLATFORMS: { id: SocialPlatform; name: string }[] = [
   { id: "instagram", name: "Instagram" },
   { id: "x", name: "X (Twitter)" },
   { id: "youtube", name: "YouTube" },
+  { id: "reddit", name: "Reddit" },
 ];
 
 const INTERVALS = [

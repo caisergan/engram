@@ -989,7 +989,7 @@ export const socialSyncConnections = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     platform: text("platform", {
-      enum: ["instagram", "x", "youtube"],
+      enum: ["instagram", "x", "youtube", "reddit"],
     }).notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     authCookies: text("authCookies").notNull(),
