@@ -273,6 +273,7 @@ function handleCommand(command: string, tab: chrome.tabs.Tab) {
       srcUrl: undefined,
       linkUrl: undefined,
       pageUrl: tab?.url,
+      title: tab?.title,
     });
 
     // now try to open the popup
