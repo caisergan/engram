@@ -62,6 +62,13 @@ if [ -z "$DATA_DIR" ] && [ -f ".env" ]; then
     DATA_DIR=$(grep "^DATA_DIR=" .env | cut -d'=' -f2)
 fi
 
+# Export so child processes (db:migrate, web, workers) resolve the same DB path.
+# Without this, each process falls back to its own ./db.db and the workers see
+# an empty, unmigrated database ("no such table" errors).
+if [ -n "$DATA_DIR" ]; then
+    export DATA_DIR
+fi
+
 # Create DATA_DIR if it doesn't exist
 if [ -n "$DATA_DIR" ] && [ ! -d "$DATA_DIR" ]; then
     echo "Creating DATA_DIR at $DATA_DIR..."
