@@ -36,6 +36,13 @@ describe("PLATFORM_REQUIRED_COOKIES", () => {
     expect(PLATFORM_REQUIRED_COOKIES.x).toEqual(["auth_token", "ct0"]);
     expect(PLATFORM_REQUIRED_COOKIES.youtube).toEqual(["SID", "HSID", "SSID"]);
   });
+
+  test("reddit requires reddit_session and token_v2", () => {
+    expect(PLATFORM_REQUIRED_COOKIES.reddit).toEqual([
+      "reddit_session",
+      "token_v2",
+    ]);
+  });
 });
 
 describe("buildCookieBlob", () => {

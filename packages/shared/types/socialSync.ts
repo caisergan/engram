@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-export const zSocialPlatformSchema = z.enum(["instagram", "x", "youtube"]);
+export const zSocialPlatformSchema = z.enum([
+  "instagram",
+  "x",
+  "youtube",
+  "reddit",
+]);
 export type SocialPlatform = z.infer<typeof zSocialPlatformSchema>;
 
 export const zSyncIntervalSchema = z
@@ -81,6 +86,7 @@ export const PLATFORM_REQUIRED_COOKIES: Record<SocialPlatform, string[]> = {
   instagram: ["sessionid", "csrftoken", "ds_user_id"],
   x: ["auth_token", "ct0"],
   youtube: ["SID", "HSID", "SSID"],
+  reddit: ["reddit_session", "token_v2"],
 };
 
 /**
