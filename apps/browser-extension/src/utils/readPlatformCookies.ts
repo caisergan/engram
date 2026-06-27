@@ -5,6 +5,7 @@ import type { ConnectablePlatform } from "./socialSyncPermissions";
 const PLATFORM_COOKIE_DOMAINS: Record<ConnectablePlatform, string[]> = {
   instagram: [".instagram.com"],
   x: [".x.com", ".twitter.com"],
+  reddit: [".reddit.com"],
 };
 
 /**
