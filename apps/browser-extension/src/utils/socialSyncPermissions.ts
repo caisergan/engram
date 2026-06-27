@@ -4,11 +4,12 @@
  * a user gesture (the Connect button), never granted at install time.
  */
 
-export type ConnectablePlatform = "instagram" | "x";
+export type ConnectablePlatform = "instagram" | "x" | "reddit";
 
 const PLATFORM_ORIGINS: Record<ConnectablePlatform, string[]> = {
   instagram: ["https://*.instagram.com/*"],
   x: ["https://*.x.com/*", "https://*.twitter.com/*"],
+  reddit: ["https://*.reddit.com/*"],
 };
 
 function permissionsFor(

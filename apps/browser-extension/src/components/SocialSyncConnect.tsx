@@ -10,6 +10,7 @@ import { Button } from "./ui/button";
 const PLATFORMS: { id: ConnectablePlatform; name: string }[] = [
   { id: "instagram", name: "Instagram" },
   { id: "x", name: "X" },
+  { id: "reddit", name: "Reddit" },
 ];
 
 export default function SocialSyncConnect() {

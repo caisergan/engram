@@ -50,7 +50,8 @@
     "<all_urls>",
     "https://*.instagram.com/*",
     "https://*.x.com/*",
-    "https://*.twitter.com/*"
+    "https://*.twitter.com/*",
+    "https://*.reddit.com/*"
   ],
   "content_scripts": [
     {
