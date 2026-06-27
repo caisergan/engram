@@ -108,6 +108,12 @@ export default Sentry.wrap(function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="save"
+              options={{
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
               name="+not-found"
               options={{
                 headerShown: false,
