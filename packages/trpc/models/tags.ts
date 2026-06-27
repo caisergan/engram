@@ -246,41 +246,42 @@ export class Tag {
       });
     }
 
-    const { deletedTags, affectedBookmarks } = await ctx.db.transaction(
-      async (trx) => {
-        const unlinked = await trx
-          .delete(tagsOnBookmarks)
-          .where(and(inArray(tagsOnBookmarks.tagId, input.fromTagIds)))
-          .returning();
+    const { deletedTags, affectedBookmarks } = ctx.db.transaction((trx) => {
+      const unlinked = trx
+        .delete(tagsOnBookmarks)
+        .where(and(inArray(tagsOnBookmarks.tagId, input.fromTagIds)))
+        .returning()
+        .all();
 
-        if (unlinked.length > 0) {
-          await trx
-            .insert(tagsOnBookmarks)
-            .values(
-              unlinked.map((u) => ({
-                ...u,
-                tagId: input.intoTagId,
-              })),
-            )
-            .onConflictDoNothing();
-        }
-
-        const deletedTags = await trx
-          .delete(bookmarkTags)
-          .where(
-            and(
-              inArray(bookmarkTags.id, input.fromTagIds),
-              eq(bookmarkTags.userId, ctx.user.id),
-            ),
+      if (unlinked.length > 0) {
+        trx
+          .insert(tagsOnBookmarks)
+          .values(
+            unlinked.map((u) => ({
+              ...u,
+              tagId: input.intoTagId,
+            })),
           )
-          .returning({ id: bookmarkTags.id });
+          .onConflictDoNothing()
+          .run();
+      }
 
-        return {
-          deletedTags,
-          affectedBookmarks: unlinked.map((u) => u.bookmarkId),
-        };
-      },
-    );
+      const deletedTags = trx
+        .delete(bookmarkTags)
+        .where(
+          and(
+            inArray(bookmarkTags.id, input.fromTagIds),
+            eq(bookmarkTags.userId, ctx.user.id),
+          ),
+        )
+        .returning({ id: bookmarkTags.id })
+        .all();
+
+      return {
+        deletedTags,
+        affectedBookmarks: unlinked.map((u) => u.bookmarkId),
+      };
+    });
 
     try {
       await Promise.all(

@@ -407,15 +407,14 @@ export class CrawlerWorker {
           );
           const bookmarkId = job.data?.bookmarkId;
           if (bookmarkId && job.numRetriesLeft == 0) {
-            await db.transaction(async (tx) => {
-              await tx
-                .update(bookmarkLinks)
+            await db.transaction((tx) => {
+              tx.update(bookmarkLinks)
                 .set({
                   crawlStatus: "failure",
                 })
-                .where(eq(bookmarkLinks.id, bookmarkId));
-              await tx
-                .update(bookmarks)
+                .where(eq(bookmarkLinks.id, bookmarkId))
+                .run();
+              tx.update(bookmarks)
                 .set({
                   taggingStatus: null,
                 })
@@ -424,9 +423,9 @@ export class CrawlerWorker {
                     eq(bookmarks.id, bookmarkId),
                     eq(bookmarks.taggingStatus, "pending"),
                   ),
-                );
-              await tx
-                .update(bookmarks)
+                )
+                .run();
+              tx.update(bookmarks)
                 .set({
                   summarizationStatus: null,
                 })
@@ -435,7 +434,8 @@ export class CrawlerWorker {
                     eq(bookmarks.id, bookmarkId),
                     eq(bookmarks.summarizationStatus, "pending"),
                   ),
-                );
+                )
+                .run();
             });
           }
         },
@@ -1700,8 +1700,8 @@ async function handleAsAssetBookmark(
         return;
       }
       const fileName = path.basename(new URL(url).pathname);
-      await db.transaction(async (trx) => {
-        await updateAsset(
+      await db.transaction((trx) => {
+        updateAsset(
           undefined,
           {
             id: downloaded.assetId,
@@ -1714,20 +1714,24 @@ async function handleAsAssetBookmark(
           },
           trx,
         );
-        await trx.insert(bookmarkAssets).values({
-          id: bookmarkId,
-          assetType,
-          assetId: downloaded.assetId,
-          content: null,
-          fileName,
-          sourceUrl: url,
-        });
+        trx
+          .insert(bookmarkAssets)
+          .values({
+            id: bookmarkId,
+            assetType,
+            assetId: downloaded.assetId,
+            content: null,
+            fileName,
+            sourceUrl: url,
+          })
+          .run();
         // Switch the type of the bookmark from LINK to ASSET
-        await trx
+        trx
           .update(bookmarks)
           .set({ type: BookmarkTypes.ASSET })
-          .where(eq(bookmarks.id, bookmarkId));
-        await trx.delete(bookmarkLinks).where(eq(bookmarkLinks.id, bookmarkId));
+          .where(eq(bookmarks.id, bookmarkId))
+          .run();
+        trx.delete(bookmarkLinks).where(eq(bookmarkLinks.id, bookmarkId)).run();
       });
       await AssetPreprocessingQueue.enqueue(
         {
@@ -2012,8 +2016,8 @@ async function crawlAndParseUrl(
           ? (readableContent?.content ?? null)
           : null;
       readableContent = null;
-      await db.transaction(async (txn) => {
-        await txn
+      await db.transaction((txn) => {
+        txn
           .update(bookmarkLinks)
           .set({
             crawledAt: new Date(),
@@ -2023,10 +2027,11 @@ async function crawlAndParseUrl(
                 ? htmlContentAssetInfo.assetId
                 : null,
           })
-          .where(eq(bookmarkLinks.id, bookmarkId));
+          .where(eq(bookmarkLinks.id, bookmarkId))
+          .run();
 
         if (screenshotAssetInfo) {
-          await updateAsset(
+          updateAsset(
             oldScreenshotAssetId,
             {
               id: screenshotAssetInfo.assetId,
@@ -2044,7 +2049,7 @@ async function crawlAndParseUrl(
           );
         }
         if (pdfAssetInfo) {
-          await updateAsset(
+          updateAsset(
             oldPdfAssetId,
             {
               id: pdfAssetInfo.assetId,
@@ -2060,11 +2065,11 @@ async function crawlAndParseUrl(
           assetDeletionTasks.push(silentDeleteAsset(userId, oldPdfAssetId));
         }
         if (imageAssetInfo) {
-          await updateAsset(oldImageAssetId, imageAssetInfo, txn);
+          updateAsset(oldImageAssetId, imageAssetInfo, txn);
           assetDeletionTasks.push(silentDeleteAsset(userId, oldImageAssetId));
         }
         if (htmlContentAssetInfo.result === "stored") {
-          await updateAsset(
+          updateAsset(
             oldContentAssetId,
             {
               id: htmlContentAssetInfo.assetId,
@@ -2080,7 +2085,7 @@ async function crawlAndParseUrl(
           assetDeletionTasks.push(silentDeleteAsset(userId, oldContentAssetId));
         } else if (oldContentAssetId) {
           // Unlink the old content asset
-          await txn.delete(assets).where(eq(assets.id, oldContentAssetId));
+          txn.delete(assets).where(eq(assets.id, oldContentAssetId)).run();
           assetDeletionTasks.push(silentDeleteAsset(userId, oldContentAssetId));
         }
       });
@@ -2109,8 +2114,8 @@ async function crawlAndParseUrl(
               contentType,
             } = archiveResult;
 
-            await db.transaction(async (txn) => {
-              await updateAsset(
+            await db.transaction((txn) => {
+              updateAsset(
                 oldFullPageArchiveAssetId,
                 {
                   id: fullPageArchiveAssetId,

@@ -751,7 +751,42 @@ export const bookmarksAppRouter = router({
 
       const key = ctx.vaultKey;
 
-      await ctx.db.transaction(async (tx) => {
+      // Encrypt asset files BEFORE the DB transaction. File I/O cannot run
+      // inside a synchronous better-sqlite3 transaction, so we read/encrypt/save
+      // each asset on disk here and collect the ids that succeeded; their
+      // `encrypted` flag is flipped inside the transaction below. (Filesystem
+      // writes are not rolled back by the SQL transaction either way.)
+      const bookmarkAssetRecords = await ctx.db.query.assets.findMany({
+        where: eq(assets.bookmarkId, input.bookmarkId),
+      });
+      const encryptedAssetIds: string[] = [];
+      for (const asset of bookmarkAssetRecords) {
+        try {
+          const { asset: assetBuffer } = await readAsset({
+            userId: ctx.user.id,
+            assetId: asset.id,
+          });
+          const encryptedBuffer = encryptBuffer(assetBuffer, key);
+          await saveAsset({
+            userId: ctx.user.id,
+            assetId: asset.id,
+            asset: encryptedBuffer,
+            metadata: {
+              contentType: asset.contentType ?? "application/octet-stream",
+              fileName: asset.fileName ?? asset.id,
+            },
+            quotaApproved: QuotaApproved._create(
+              ctx.user.id,
+              encryptedBuffer.byteLength,
+            ),
+          });
+          encryptedAssetIds.push(asset.id);
+        } catch {
+          // Asset may not exist on disk yet (pending crawl)
+        }
+      }
+
+      ctx.db.transaction((tx) => {
         const encryptedTitle = bookmark.title
           ? encryptText(bookmark.title, key)
           : null;
@@ -759,8 +794,7 @@ export const bookmarksAppRouter = router({
           ? encryptText(bookmark.note, key)
           : null;
 
-        await tx
-          .update(bookmarks)
+        tx.update(bookmarks)
           .set({
             vaulted: true,
             title: null,
@@ -771,12 +805,12 @@ export const bookmarksAppRouter = router({
             taggingStatus: null,
             summarizationStatus: null,
           })
-          .where(eq(bookmarks.id, input.bookmarkId));
+          .where(eq(bookmarks.id, input.bookmarkId))
+          .run();
 
         if (bookmark.link) {
           const encryptedUrl = encryptText(bookmark.link.url, key);
-          await tx
-            .update(bookmarkLinks)
+          tx.update(bookmarkLinks)
             .set({
               url: encryptedUrl,
               title: null,
@@ -787,56 +821,32 @@ export const bookmarksAppRouter = router({
               author: null,
               publisher: null,
             })
-            .where(eq(bookmarkLinks.id, input.bookmarkId));
+            .where(eq(bookmarkLinks.id, input.bookmarkId))
+            .run();
         }
 
         if (bookmark.text?.text) {
           const encryptedTextContent = encryptText(bookmark.text.text, key);
-          await tx
-            .update(bookmarkTexts)
+          tx.update(bookmarkTexts)
             .set({ text: encryptedTextContent })
-            .where(eq(bookmarkTexts.id, input.bookmarkId));
+            .where(eq(bookmarkTexts.id, input.bookmarkId))
+            .run();
         }
 
-        const bookmarkAssetRecords = await tx.query.assets.findMany({
-          where: eq(assets.bookmarkId, input.bookmarkId),
-        });
-        for (const asset of bookmarkAssetRecords) {
-          try {
-            const { asset: assetBuffer } = await readAsset({
-              userId: ctx.user.id,
-              assetId: asset.id,
-            });
-            const encryptedBuffer = encryptBuffer(assetBuffer, key);
-            await saveAsset({
-              userId: ctx.user.id,
-              assetId: asset.id,
-              asset: encryptedBuffer,
-              metadata: {
-                contentType: asset.contentType ?? "application/octet-stream",
-                fileName: asset.fileName ?? asset.id,
-              },
-              quotaApproved: QuotaApproved._create(
-                ctx.user.id,
-                encryptedBuffer.byteLength,
-              ),
-            });
-            await tx
-              .update(assets)
-              .set({ encrypted: true })
-              .where(eq(assets.id, asset.id));
-          } catch {
-            // Asset may not exist on disk yet (pending crawl)
-          }
+        for (const assetId of encryptedAssetIds) {
+          tx.update(assets)
+            .set({ encrypted: true })
+            .where(eq(assets.id, assetId))
+            .run();
         }
 
-        await tx
-          .delete(tagsOnBookmarks)
-          .where(eq(tagsOnBookmarks.bookmarkId, input.bookmarkId));
+        tx.delete(tagsOnBookmarks)
+          .where(eq(tagsOnBookmarks.bookmarkId, input.bookmarkId))
+          .run();
 
-        await tx
-          .delete(bookmarksInLists)
-          .where(eq(bookmarksInLists.bookmarkId, input.bookmarkId));
+        tx.delete(bookmarksInLists)
+          .where(eq(bookmarksInLists.bookmarkId, input.bookmarkId))
+          .run();
       });
 
       SearchIndexingQueue.enqueue({

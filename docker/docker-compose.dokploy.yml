@@ -1,0 +1,67 @@
+# Dokploy production stack for Engram.
+# The `web` image is built in CI (.github/workflows/deploy.yml) and pulled from GHCR.
+# Traefik (managed by Dokploy) terminates TLS and routes the public domain to web:3000,
+# so NO host ports are published here. chrome + meilisearch stay internal.
+#
+# Secrets/config (NEXTAUTH_URL, NEXTAUTH_SECRET, MEILI_MASTER_KEY, ...) are provided by
+# Dokploy's Environment tab and interpolated into ${VARS} below. See docker/.env.example.
+services:
+  web:
+    image: ghcr.io/caisergan/engram:latest
+    restart: unless-stopped
+    volumes:
+      - data:/data
+    environment:
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      MEILI_ADDR: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      BROWSER_WEB_URL: http://chrome:9222
+      DATA_DIR: /data
+      DB_WAL_MODE: ${DB_WAL_MODE:-true}
+      DISABLE_SIGNUPS: ${DISABLE_SIGNUPS:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    networks:
+      - default
+      - dokploy-network
+    # Preferred: attach the domain via the Dokploy UI (Domains tab → service `web`, port 3000).
+    # Fallback ONLY if your Dokploy version needs manual Traefik labels for Compose domains —
+    # uncomment and replace engram.YOURDOMAIN:
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.engram.rule=Host(`engram.YOURDOMAIN`)
+    #   - traefik.http.routers.engram.entrypoints=websecure
+    #   - traefik.http.routers.engram.tls.certresolver=letsencrypt
+    #   - traefik.http.services.engram.loadbalancer.server.port=3000
+  chrome:
+    image: gcr.io/zenika-hub/alpine-chrome:124
+    restart: unless-stopped
+    command:
+      - --no-sandbox
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --hide-scrollbars
+    networks:
+      - default
+  meilisearch:
+    image: getmeili/meilisearch:v1.41.0
+    restart: unless-stopped
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    volumes:
+      - meilisearch:/meili_data
+    networks:
+      - default
+
+volumes:
+  meilisearch:
+  data:
+
+networks:
+  default:
+  dokploy-network:
+    external: true
