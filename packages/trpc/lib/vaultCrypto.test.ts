@@ -129,7 +129,13 @@ describe("Vault Crypto", () => {
         testSecret,
         5,
       );
-      const tampered = token.slice(0, -1) + "X";
+      // Flip a decoded signature byte. Mutating the last base64url character is
+      // unreliable: a 32-byte HMAC's final char carries only 4 meaningful bits,
+      // so some substitutions decode to identical bytes and verification passes.
+      const [payloadStr, signature] = token.split(".");
+      const signatureBytes = Buffer.from(signature, "base64url");
+      signatureBytes[0] ^= 0xff;
+      const tampered = `${payloadStr}.${signatureBytes.toString("base64url")}`;
       expect(() => verifyVaultToken(tampered, testSecret)).toThrow();
     });
 
