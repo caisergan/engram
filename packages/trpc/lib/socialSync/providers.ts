@@ -4,6 +4,7 @@ import type {
 } from "@karakeep/shared/types/socialSync";
 
 import { instagramProvider } from "./instagramProvider";
+import { redditProvider } from "./redditProvider";
 import { xProvider } from "./xProvider";
 import { youtubeProvider } from "./youtubeProvider";
 
@@ -11,6 +12,7 @@ const providers: Record<SocialPlatform, SocialSyncProvider> = {
   instagram: instagramProvider,
   x: xProvider,
   youtube: youtubeProvider,
+  reddit: redditProvider,
 };
 
 export function getProvider(platform: SocialPlatform): SocialSyncProvider {

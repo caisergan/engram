@@ -57,6 +57,13 @@ describe("PLATFORM_REQUIRED_COOKIES", () => {
       "APISID",
     ]);
   });
+
+  test("reddit requires reddit_session and token_v2", () => {
+    expect(PLATFORM_REQUIRED_COOKIES.reddit).toEqual([
+      "reddit_session",
+      "token_v2",
+    ]);
+  });
 });
 
 describe("buildCookieBlob", () => {
