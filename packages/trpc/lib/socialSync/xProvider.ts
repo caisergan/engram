@@ -143,7 +143,8 @@ function mapTweet(entry: XEntry): SyncItem | null {
     (legacy?.entities as { media?: unknown })?.media;
   const imageUrl = Array.isArray(media)
     ? asString(
-        (media[0] as { media_url_https?: unknown } | undefined)?.media_url_https,
+        (media[0] as { media_url_https?: unknown } | undefined)
+          ?.media_url_https,
       )
     : undefined;
   return {

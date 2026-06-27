@@ -123,7 +123,8 @@ function findContinuation(node: unknown): string | null {
           continuationEndpoint?: { continuationCommand?: { token?: unknown } };
         };
       }
-    ).continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    ).continuationItemRenderer?.continuationEndpoint?.continuationCommand
+      ?.token;
     if (typeof token === "string" && token.length > 0) return token;
     for (const value of Object.values(node)) {
       const c = findContinuation(value);
@@ -160,7 +161,9 @@ export const youtubeProvider: SocialSyncProvider = {
   async fetchSavedItems(config) {
     const transport = cookieTransport(config.authCookies);
     if (!transport) {
-      throw Object.assign(new Error("Invalid YouTube cookies"), { status: 401 });
+      throw Object.assign(new Error("Invalid YouTube cookies"), {
+        status: 401,
+      });
     }
 
     const response = await fetch(

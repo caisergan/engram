@@ -85,7 +85,12 @@ describe("xProvider", () => {
           res(
             timeline(
               [
-                tweetEntry("111", "alice", "hello world", "https://pbs/img.jpg"),
+                tweetEntry(
+                  "111",
+                  "alice",
+                  "hello world",
+                  "https://pbs/img.jpg",
+                ),
                 tweetEntry("222", "bob", "second tweet"),
               ],
               "CURSOR_NEXT",
