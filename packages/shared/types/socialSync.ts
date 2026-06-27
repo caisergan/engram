@@ -80,7 +80,7 @@ export interface SocialSyncProvider {
 export const PLATFORM_REQUIRED_COOKIES: Record<SocialPlatform, string[]> = {
   instagram: ["sessionid", "csrftoken", "ds_user_id"],
   x: ["auth_token", "ct0"],
-  youtube: ["SID", "HSID", "SSID"],
+  youtube: ["SID", "HSID", "SSID", "SAPISID", "APISID"],
 };
 
 /**
@@ -180,6 +180,19 @@ export function normalizeCookieInput(
 export function isInstagramUrl(url: string): boolean {
   try {
     return /(^|\.)instagram\.com$/.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `url` points at x.com / twitter.com (or a subdomain). Like Instagram,
+ * X gates tweet pages behind a login wall, so the crawler skips re-fetching
+ * content the social-sync importer already populated from the authenticated API.
+ */
+export function isXUrl(url: string): boolean {
+  try {
+    return /(^|\.)(x\.com|twitter\.com)$/.test(new URL(url).hostname);
   } catch {
     return false;
   }
