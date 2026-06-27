@@ -102,17 +102,22 @@ export class User {
       emailVerified?: Date | null;
     },
   ) {
-    return await db.transaction(async (trx) => {
+    // better-sqlite3 transactions are synchronous: the callback must not be
+    // async. Passing an async (promise-returning) callback throws
+    // "Transaction function cannot return a promise". Use the synchronous query
+    // terminators (.all()/.get()/.run()) instead of awaiting the builders.
+    return db.transaction((trx) => {
       let userRole = input.role;
       if (!userRole) {
-        const [{ count: userCount }] = await trx
+        const [{ count: userCount }] = trx
           .select({ count: count() })
-          .from(users);
+          .from(users)
+          .all();
         userRole = userCount === 0 ? "admin" : "user";
       }
 
       try {
-        const [result] = await trx
+        const [result] = trx
           .insert(users)
           .values({
             name: input.name,
@@ -124,7 +129,8 @@ export class User {
             bookmarkQuota: serverConfig.quotas.free.bookmarkLimit,
             storageQuota: serverConfig.quotas.free.assetSizeBytes,
           })
-          .returning();
+          .returning()
+          .all();
 
         return result;
       } catch (e) {
@@ -292,17 +298,19 @@ export class User {
       const token = randomBytes(32).toString("hex");
       const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-      await ctx.db.transaction(async (tx) => {
+      await ctx.db.transaction((tx) => {
         // Invalidate any existing reset tokens for this user
-        await tx
-          .delete(passwordResetTokens)
-          .where(eq(passwordResetTokens.userId, user.id));
+        tx.delete(passwordResetTokens)
+          .where(eq(passwordResetTokens.userId, user.id))
+          .run();
 
-        await tx.insert(passwordResetTokens).values({
-          userId: user.id,
-          token,
-          expires,
-        });
+        tx.insert(passwordResetTokens)
+          .values({
+            userId: user.id,
+            token,
+            expires,
+          })
+          .run();
       });
 
       await sendPasswordResetEmail(email, user.name, token);
@@ -612,18 +620,18 @@ export class User {
       return;
     }
 
-    await this.ctx.db.transaction(async (tx) => {
-      await tx
-        .update(users)
+    await this.ctx.db.transaction((tx) => {
+      tx.update(users)
         .set({ image: assetId })
-        .where(eq(users.id, this.user.id));
+        .where(eq(users.id, this.user.id))
+        .run();
 
       if (!previousImage || previousImage === assetId) {
         return;
       }
 
       if (previousAsset && !previousAsset.bookmarkId) {
-        await tx.delete(assets).where(eq(assets.id, previousAsset.id));
+        tx.delete(assets).where(eq(assets.id, previousAsset.id)).run();
       }
     });
 

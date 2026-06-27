@@ -135,8 +135,8 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
       });
 
       if (subscriptionsList.data.length === 0) {
-        await db.transaction(async (trx) => {
-          await trx
+        await db.transaction((trx) => {
+          trx
             .update(subscriptions)
             .set({
               status: "canceled",
@@ -147,10 +147,11 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
               startDate: null,
               endDate: null,
             })
-            .where(eq(subscriptions.stripeCustomerId, customerId));
+            .where(eq(subscriptions.stripeCustomerId, customerId))
+            .run();
 
           // Update user quotas to free tier limits and disable browser crawling
-          await trx
+          trx
             .update(users)
             .set({
               bookmarkQuota: serverConfig.quotas.free.bookmarkLimit,
@@ -158,7 +159,8 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
               browserCrawlingEnabled:
                 serverConfig.quotas.free.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(eq(users.id, existingSubscription.userId))
+            .run();
         });
         addLogFields<"subscription.synced">({
           "subscription.tier": "free",
@@ -196,15 +198,16 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
           : null,
       };
 
-      await db.transaction(async (trx) => {
-        await trx
+      await db.transaction((trx) => {
+        trx
           .update(subscriptions)
           .set(subData)
-          .where(eq(subscriptions.stripeCustomerId, customerId));
+          .where(eq(subscriptions.stripeCustomerId, customerId))
+          .run();
 
         if (subData.status === "active" || subData.status === "trialing") {
           // Enable paid tier quotas and browser crawling
-          await trx
+          trx
             .update(users)
             .set({
               bookmarkQuota: serverConfig.quotas.paid.bookmarkLimit,
@@ -212,10 +215,11 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
               browserCrawlingEnabled:
                 serverConfig.quotas.paid.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(eq(users.id, existingSubscription.userId))
+            .run();
         } else {
           // Set free tier quotas and disable browser crawling
-          await trx
+          trx
             .update(users)
             .set({
               bookmarkQuota: serverConfig.quotas.free.bookmarkLimit,
@@ -223,7 +227,8 @@ async function syncStripeDataToDatabase(customerId: string, db: Context["db"]) {
               browserCrawlingEnabled:
                 serverConfig.quotas.free.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(eq(users.id, existingSubscription.userId))
+            .run();
         }
       });
 

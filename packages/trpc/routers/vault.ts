@@ -189,91 +189,108 @@ export const vaultAppRouter = router({
         input.newPin,
       );
 
-      await ctx.db.transaction(async (tx) => {
-        const vaultedBookmarks = await tx.query.bookmarks.findMany({
+      const vaultedBookmarks = await ctx.db.query.bookmarks.findMany({
+        where: and(
+          eq(bookmarks.userId, ctx.user.id),
+          eq(bookmarks.vaulted, true),
+        ),
+        with: { link: true, text: true },
+      });
+
+      // Re-encrypt asset files (file I/O) and compute the new ciphertext for the
+      // encrypted columns BEFORE the synchronous transaction — neither file I/O
+      // nor awaits can run inside a better-sqlite3 transaction. The DB writes are
+      // then applied atomically below.
+      const bookmarkWrites: {
+        id: string;
+        updates: Record<string, string | null>;
+        linkUrl: string | null;
+        textContent: string | null;
+      }[] = [];
+
+      for (const bookmark of vaultedBookmarks) {
+        const updates: Record<string, string | null> = {};
+
+        if (bookmark.encryptedTitle) {
+          const plain = decryptText(bookmark.encryptedTitle, oldKey);
+          updates.encryptedTitle = encryptText(plain, newKey);
+        }
+        if (bookmark.encryptedNote) {
+          const plain = decryptText(bookmark.encryptedNote, oldKey);
+          updates.encryptedNote = encryptText(plain, newKey);
+        }
+
+        const linkUrl = bookmark.link
+          ? encryptText(decryptText(bookmark.link.url, oldKey), newKey)
+          : null;
+        const textContent = bookmark.text?.text
+          ? encryptText(decryptText(bookmark.text.text, oldKey), newKey)
+          : null;
+
+        bookmarkWrites.push({ id: bookmark.id, updates, linkUrl, textContent });
+
+        const assetRecords = await ctx.db.query.assets.findMany({
           where: and(
-            eq(bookmarks.userId, ctx.user.id),
-            eq(bookmarks.vaulted, true),
+            eq(assets.bookmarkId, bookmark.id),
+            eq(assets.encrypted, true),
           ),
-          with: { link: true, text: true },
         });
-
-        for (const bookmark of vaultedBookmarks) {
-          const updates: Record<string, string | null> = {};
-
-          if (bookmark.encryptedTitle) {
-            const plain = decryptText(bookmark.encryptedTitle, oldKey);
-            updates.encryptedTitle = encryptText(plain, newKey);
+        for (const asset of assetRecords) {
+          try {
+            const { asset: buf } = await readAsset({
+              userId: ctx.user.id,
+              assetId: asset.id,
+            });
+            const plainBuf = decryptBuffer(buf, oldKey);
+            const reEncrypted = encryptBuffer(plainBuf, newKey);
+            await saveAsset({
+              userId: ctx.user.id,
+              assetId: asset.id,
+              asset: reEncrypted,
+              metadata: {
+                contentType: asset.contentType ?? "application/octet-stream",
+                fileName: asset.fileName ?? asset.id,
+              },
+              quotaApproved: QuotaApproved._create(
+                ctx.user.id,
+                reEncrypted.byteLength,
+              ),
+            });
+          } catch {
+            // Asset may not exist on disk
           }
-          if (bookmark.encryptedNote) {
-            const plain = decryptText(bookmark.encryptedNote, oldKey);
-            updates.encryptedNote = encryptText(plain, newKey);
-          }
+        }
+      }
 
+      ctx.db.transaction((tx) => {
+        for (const { id, updates, linkUrl, textContent } of bookmarkWrites) {
           if (Object.keys(updates).length > 0) {
-            await tx
-              .update(bookmarks)
-              .set(updates)
-              .where(eq(bookmarks.id, bookmark.id));
+            tx.update(bookmarks).set(updates).where(eq(bookmarks.id, id)).run();
           }
 
-          if (bookmark.link) {
-            const plainUrl = decryptText(bookmark.link.url, oldKey);
-            await tx
-              .update(bookmarkLinks)
-              .set({ url: encryptText(plainUrl, newKey) })
-              .where(eq(bookmarkLinks.id, bookmark.id));
+          if (linkUrl !== null) {
+            tx.update(bookmarkLinks)
+              .set({ url: linkUrl })
+              .where(eq(bookmarkLinks.id, id))
+              .run();
           }
 
-          if (bookmark.text?.text) {
-            const plainText = decryptText(bookmark.text.text, oldKey);
-            await tx
-              .update(bookmarkTexts)
-              .set({ text: encryptText(plainText, newKey) })
-              .where(eq(bookmarkTexts.id, bookmark.id));
-          }
-
-          const assetRecords = await tx.query.assets.findMany({
-            where: and(
-              eq(assets.bookmarkId, bookmark.id),
-              eq(assets.encrypted, true),
-            ),
-          });
-          for (const asset of assetRecords) {
-            try {
-              const { asset: buf } = await readAsset({
-                userId: ctx.user.id,
-                assetId: asset.id,
-              });
-              const plainBuf = decryptBuffer(buf, oldKey);
-              const reEncrypted = encryptBuffer(plainBuf, newKey);
-              await saveAsset({
-                userId: ctx.user.id,
-                assetId: asset.id,
-                asset: reEncrypted,
-                metadata: {
-                  contentType: asset.contentType ?? "application/octet-stream",
-                  fileName: asset.fileName ?? asset.id,
-                },
-                quotaApproved: QuotaApproved._create(
-                  ctx.user.id,
-                  reEncrypted.byteLength,
-                ),
-              });
-            } catch {
-              // Asset may not exist on disk
-            }
+          if (textContent !== null) {
+            tx.update(bookmarkTexts)
+              .set({ text: textContent })
+              .where(eq(bookmarkTexts.id, id))
+              .run();
           }
         }
 
-        await tx
-          .update(users)
+        tx.update(users)
           .set({
             vaultPinHash: newPinHash,
             vaultPinSalt: newPinSalt,
             vaultEncryptionSalt: newEncryptionSalt,
           })
-          .where(eq(users.id, ctx.user.id));
+          .where(eq(users.id, ctx.user.id))
+          .run();
       });
     }),
 
@@ -304,49 +321,52 @@ export const vaultAppRouter = router({
         });
       }
 
-      await ctx.db.transaction(async (tx) => {
-        const vaultedBookmarks = await tx.query.bookmarks.findMany({
-          where: and(
-            eq(bookmarks.userId, ctx.user.id),
-            eq(bookmarks.vaulted, true),
-          ),
-          columns: { id: true },
-          with: { assets: true },
-        });
+      const vaultedBookmarks = await ctx.db.query.bookmarks.findMany({
+        where: and(
+          eq(bookmarks.userId, ctx.user.id),
+          eq(bookmarks.vaulted, true),
+        ),
+        columns: { id: true },
+        with: { assets: true },
+      });
 
-        for (const bookmark of vaultedBookmarks) {
-          for (const asset of bookmark.assets) {
-            try {
-              await deleteAsset({
-                userId: ctx.user.id,
-                assetId: asset.id,
-              });
-            } catch {
-              // Asset may not exist
-            }
+      // Delete asset files and enqueue search-index removals BEFORE the
+      // synchronous transaction — file I/O and queue calls cannot run inside a
+      // better-sqlite3 transaction.
+      for (const bookmark of vaultedBookmarks) {
+        for (const asset of bookmark.assets) {
+          try {
+            await deleteAsset({
+              userId: ctx.user.id,
+              assetId: asset.id,
+            });
+          } catch {
+            // Asset may not exist
           }
-
-          SearchIndexingQueue.enqueue({
-            bookmarkId: bookmark.id,
-            type: "delete",
-          });
         }
 
-        await tx
-          .delete(bookmarks)
+        SearchIndexingQueue.enqueue({
+          bookmarkId: bookmark.id,
+          type: "delete",
+        });
+      }
+
+      ctx.db.transaction((tx) => {
+        tx.delete(bookmarks)
           .where(
             and(eq(bookmarks.userId, ctx.user.id), eq(bookmarks.vaulted, true)),
-          );
+          )
+          .run();
 
-        await tx
-          .update(users)
+        tx.update(users)
           .set({
             vaultPinHash: null,
             vaultPinSalt: null,
             vaultEncryptionSalt: null,
             vaultAutoLockMinutes: 5,
           })
-          .where(eq(users.id, ctx.user.id));
+          .where(eq(users.id, ctx.user.id))
+          .run();
       });
     }),
 });
