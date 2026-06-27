@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { getTestDB } from "../testUtils";
 import { User } from "./users";
@@ -41,6 +41,28 @@ describe("User.createRaw", () => {
     });
 
     expect(second.role).toBe("user");
+  });
+
+  it("uses an IMMEDIATE transaction so a write-lock-contended signup waits instead of failing with SQLITE_BUSY", async () => {
+    // createRaw reads (SELECT count) then writes (INSERT). A deferred transaction
+    // upgrades a read lock to a write lock, and SQLite returns SQLITE_BUSY
+    // immediately on that upgrade (the busy handler is skipped to avoid deadlock).
+    // An IMMEDIATE transaction takes the write lock up front, where busy_timeout
+    // applies, so concurrent signups wait instead of erroring.
+    const db = getTestDB();
+    const txSpy = vi.fn(db.transaction.bind(db));
+    db.transaction = txSpy as typeof db.transaction;
+
+    await User.createRaw(db, {
+      name: "Tx",
+      email: "tx@test.com",
+      password: "h",
+      salt: "s",
+    });
+
+    expect(txSpy).toHaveBeenCalledWith(expect.any(Function), {
+      behavior: "immediate",
+    });
   });
 
   it("maps a duplicate-email unique violation to a friendly error", async () => {

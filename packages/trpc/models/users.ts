@@ -106,48 +106,57 @@ export class User {
     // async. Passing an async (promise-returning) callback throws
     // "Transaction function cannot return a promise". Use the synchronous query
     // terminators (.all()/.get()/.run()) instead of awaiting the builders.
-    return db.transaction((trx) => {
-      let userRole = input.role;
-      if (!userRole) {
-        const [{ count: userCount }] = trx
-          .select({ count: count() })
-          .from(users)
-          .all();
-        userRole = userCount === 0 ? "admin" : "user";
-      }
-
-      try {
-        const [result] = trx
-          .insert(users)
-          .values({
-            name: input.name,
-            email: input.email,
-            password: input.password,
-            salt: input.salt,
-            role: userRole,
-            emailVerified: input.emailVerified,
-            bookmarkQuota: serverConfig.quotas.free.bookmarkLimit,
-            storageQuota: serverConfig.quotas.free.assetSizeBytes,
-          })
-          .returning()
-          .all();
-
-        return result;
-      } catch (e) {
-        if (e instanceof SqliteError) {
-          if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: "Email is already taken",
-            });
-          }
+    return db.transaction(
+      (trx) => {
+        let userRole = input.role;
+        if (!userRole) {
+          const [{ count: userCount }] = trx
+            .select({ count: count() })
+            .from(users)
+            .all();
+          userRole = userCount === 0 ? "admin" : "user";
         }
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Something went wrong",
-        });
-      }
-    });
+
+        try {
+          const [result] = trx
+            .insert(users)
+            .values({
+              name: input.name,
+              email: input.email,
+              password: input.password,
+              salt: input.salt,
+              role: userRole,
+              emailVerified: input.emailVerified,
+              bookmarkQuota: serverConfig.quotas.free.bookmarkLimit,
+              storageQuota: serverConfig.quotas.free.assetSizeBytes,
+            })
+            .returning()
+            .all();
+
+          return result;
+        } catch (e) {
+          if (e instanceof SqliteError) {
+            if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Email is already taken",
+              });
+            }
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Something went wrong",
+            cause: e,
+          });
+        }
+        // IMMEDIATE: take the write lock up front. The body reads (SELECT count)
+        // before writing (INSERT); a deferred transaction upgrades a read lock to
+        // a write lock, and SQLite returns SQLITE_BUSY immediately on that upgrade
+        // (busy_timeout is not honored for lock upgrades). IMMEDIATE makes a
+        // contended signup wait for the lock instead of erroring.
+      },
+      { behavior: "immediate" },
+    );
   }
 
   static async getAll(ctx: AuthedContext): Promise<User[]> {
