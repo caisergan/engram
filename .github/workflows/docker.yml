@@ -9,6 +9,8 @@ on:
 
 jobs:
   build:
+    # Upstream-only: skip on forks (this fork uses .github/workflows/deploy.yml instead).
+    if: ${{ github.repository == 'karakeep-app/karakeep' }}
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +114,7 @@ jobs:
 
   manifest:
     needs: build
+    if: ${{ github.repository == 'karakeep-app/karakeep' }}
     runs-on: ubuntu-latest
     permissions:
       packages: write
