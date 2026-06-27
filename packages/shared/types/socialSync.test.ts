@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildCookieBlob,
   isInstagramUrl,
+  isXUrl,
   normalizeCookieInput,
   PLATFORM_REQUIRED_COOKIES,
 } from "./socialSync";
@@ -26,6 +27,20 @@ describe("isInstagramUrl", () => {
   });
 });
 
+describe("isXUrl", () => {
+  test("matches x.com and twitter.com and subdomains", () => {
+    expect(isXUrl("https://x.com/user/status/123")).toBe(true);
+    expect(isXUrl("https://www.twitter.com/user/status/123")).toBe(true);
+    expect(isXUrl("https://mobile.x.com/i/bookmarks")).toBe(true);
+  });
+
+  test("does not match look-alikes or non-URLs", () => {
+    expect(isXUrl("https://notx.com/")).toBe(false);
+    expect(isXUrl("https://x.com.evil.com/")).toBe(false);
+    expect(isXUrl("not a url")).toBe(false);
+  });
+});
+
 describe("PLATFORM_REQUIRED_COOKIES", () => {
   test("declares the required cookies per platform", () => {
     expect(PLATFORM_REQUIRED_COOKIES.instagram).toEqual([
@@ -34,7 +49,13 @@ describe("PLATFORM_REQUIRED_COOKIES", () => {
       "ds_user_id",
     ]);
     expect(PLATFORM_REQUIRED_COOKIES.x).toEqual(["auth_token", "ct0"]);
-    expect(PLATFORM_REQUIRED_COOKIES.youtube).toEqual(["SID", "HSID", "SSID"]);
+    expect(PLATFORM_REQUIRED_COOKIES.youtube).toEqual([
+      "SID",
+      "HSID",
+      "SSID",
+      "SAPISID",
+      "APISID",
+    ]);
   });
 
   test("reddit requires reddit_session and token_v2", () => {

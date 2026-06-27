@@ -83,7 +83,7 @@ import {
 import { getRateLimitClient } from "@karakeep/shared/ratelimiting";
 import { tryCatch } from "@karakeep/shared/tryCatch";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
-import { isInstagramUrl } from "@karakeep/shared/types/socialSync";
+import { isInstagramUrl, isXUrl } from "@karakeep/shared/types/socialSync";
 import { WebhooksService } from "@karakeep/trpc/models/webhooks.service";
 
 import type {
@@ -2228,9 +2228,9 @@ async function runCrawler(
   // caption + banner image the social-sync importer already populated from the
   // authenticated API. Skip the fetch entirely for those bookmarks; tagging,
   // summarization and search indexing still run against the imported content.
-  if (source === "sync" && isInstagramUrl(url)) {
+  if (source === "sync" && (isInstagramUrl(url) || isXUrl(url))) {
     logger.info(
-      `[Crawler][${jobId}] Skipping crawl for synced Instagram bookmark "${bookmarkId}"; using importer-provided content`,
+      `[Crawler][${jobId}] Skipping crawl for synced login-gated bookmark "${bookmarkId}"; using importer-provided content`,
     );
     const enqueueOpts: EnqueueOptions = {
       priority: job.priority,
